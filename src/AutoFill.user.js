@@ -1,11 +1,13 @@
 // ==UserScript==
 // @name         Accounting Form AutoFill
-// @namespace    http://tampermonkey.net/
+// @namespace    https://github.com/Lgyniwka/Autofill-check
 // @version      1.5
 // @description  Плавающая панель + отправка комментария
 // @author       You
 // @match        https://tools.sdc.yandex-team.ru/accounting-fleet-works*
 // @grant        none
+// @downloadURL  https://raw.githubusercontent.com/Lgyniwka/Autofill-check/main/src/AutoFill.user.js
+// @updateURL    https://raw.githubusercontent.com/Lgyniwka/Autofill-check/main/src/AutoFill.user.js
 // ==/UserScript==
 
 (function () {

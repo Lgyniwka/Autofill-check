@@ -6,6 +6,8 @@
 // @author       You
 // @match        https://st.yandex-team.ru/*
 // @grant        none
+// @downloadURL  https://raw.githubusercontent.com/Lgyniwka/Autofill-check/main/src/Self_check.user.js
+// @updateURL    https://raw.githubusercontent.com/Lgyniwka/Autofill-check/main/src/Self_check.user.js
 // ==/UserScript==
 
 (function () {
