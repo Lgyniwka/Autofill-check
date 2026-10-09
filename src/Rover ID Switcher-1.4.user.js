@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Rover ID Switcher
 // @namespace    http://tampermonkey.net/
-// @version      1.4
+// @version      1.5
 // @description  Быстрая смена номера ровера → всегда на /maintenance
 // @author       You
 // @match        https://tools.sdc.yandex-team.ru/rovers/*
