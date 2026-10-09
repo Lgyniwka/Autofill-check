@@ -7,8 +7,8 @@
 // @match        https://tools.sdc.yandex-team.ru/rovers/*
 // @match        https://tools.sdc.yandex-team.ru/rovers-old/*
 // @grant        none
-// @downloadURL  https://raw.githubusercontent.com/Lgyniwka/Autofill-check/main/src/AutoFill.user.js
-// @updateURL    https://raw.githubusercontent.com/Lgyniwka/Autofill-check/main/src/AutoFill.user.js
+// @downloadURL  https://raw.githubusercontent.com/Lgyniwka/Autofill-check/main/src/Rover ID Switcher-1.4.user.js
+// @updateURL    https://raw.githubusercontent.com/Lgyniwka/Autofill-check/main/src/Rover ID Switcher-1.4.user.js
 // ==/UserScript==
 
 (function () {
