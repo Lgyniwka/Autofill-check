@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ST Ticket Self-Check
 // @namespace    http://tampermonkey.net/
-// @version      1.9
+// @version      1.9.1
 // @description  Самопроверка + форма учёта + комментарии + переход статусов
 // @author       You
 // @match        https://st.yandex-team.ru/*
