@@ -266,71 +266,72 @@
     }
 
     async function fillSuggest(labelText, value) {
-        const labels = document.querySelectorAll('label.editable-field__label');
-        let input = null;
+    const labels = document.querySelectorAll('label.editable-field__label');
+    let input = null;
 
-        for (const label of labels) {
-            if (label.textContent.trim() === labelText) {
-                const field = label.closest('.editable-field, .screen-field');
-                input = field?.querySelector('input[role="combobox"], input.g-text-input__control, input');
-                if (input) break;
-            }
+    for (const label of labels) {
+        if (label.textContent.trim() === labelText) {
+            const field = label.closest('.editable-field, .screen-field');
+            input = field?.querySelector('input[role="combobox"], input.g-text-input__control, input');
+            if (input) break;
         }
+    }
 
-        if (!input) {
-            console.warn('[ST Helper] Не найден input для', labelText);
-            return false;
-        }
-
-        input.focus();
-        input.click();
-
-        const nativeSetter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set;
-        nativeSetter.call(input, '');
-        input.dispatchEvent(new Event('input', { bubbles: true }));
-        await sleep(200);
-
-        // Ввод посимвольно
-        for (const char of value) {
-            nativeSetter.call(input, input.value + char);
-            input.dispatchEvent(new InputEvent('input', {
-                bubbles: true,
-                data: char,
-                inputType: 'insertText'
-            }));
-            await sleep(40);
-        }
-
-        input.dispatchEvent(new Event('change', { bubbles: true }));
-        await sleep(800);
-
-        // Ищем подсказку по всей странице
-        const candidates = document.querySelectorAll(
-            '.g-label__content, .ToolsSuggest-ChosenContent, [class*="popup"] div, [class*="Suggest"] div, [class*="Menu"] div, li, span'
-        );
-
-        for (const el of candidates) {
-            const text = el.textContent.trim();
-            if (text === value || text.includes(value)) {
-                el.click();
-                console.log('[ST Helper] Выбрано:', text);
-                await sleep(400);
-                return true;
-            }
-        }
-
-        // Для обычного текстового поля (Код дефекта)
-        if (labelText === 'Код дефекта') {
-            nativeSetter.call(input, value);
-            input.dispatchEvent(new Event('input', { bubbles: true }));
-            input.dispatchEvent(new Event('change', { bubbles: true }));
-            return true;
-        }
-
-        console.warn('[ST Helper] Подсказка не найдена для', value);
+    if (!input) {
+        console.warn('[ST Helper] Не найден input для', labelText);
         return false;
     }
 
+    // Фокус и очистка
+    input.focus();
+    input.click();
+
+    const nativeSetter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set;
+    nativeSetter.call(input, '');
+    input.dispatchEvent(new Event('input', { bubbles: true }));
+    await sleep(300);
+
+    // Ввод целиком (без посимвольного — меньше шума)
+    nativeSetter.call(input, value);
+    input.dispatchEvent(new InputEvent('input', {
+        bubbles: true,
+        data: value,
+        inputType: 'insertText'
+    }));
+    input.dispatchEvent(new Event('change', { bubbles: true }));
+
+    // === Главное изменение: ждём 1 секунду перед поиском подсказки ===
+    await sleep(1000);
+
+    // Ищем подсказку
+    const candidates = document.querySelectorAll(
+        '.g-label__content, .ToolsSuggest-ChosenContent, [class*="popup"] div, [class*="Suggest"] div, [class*="Menu"] div, li, span, div'
+    );
+
+    for (const el of candidates) {
+        const text = el.textContent.trim();
+        if (text === value || text.includes(value)) {
+            // Игнорируем сам input и слишком длинные блоки
+            if (el.tagName === 'INPUT' || text.length > 80) continue;
+
+            el.click();
+            console.log('[ST Helper] Выбрано:', text);
+            await sleep(500);
+            return true;
+        }
+    }
+
+    // Для обычного текстового поля (Код дефекта)
+    if (labelText === 'Код дефекта') {
+        nativeSetter.call(input, value);
+        input.dispatchEvent(new Event('input', { bubbles: true }));
+        input.dispatchEvent(new Event('change', { bubbles: true }));
+        return true;
+    }
+
+    console.warn('[ST Helper] Подсказка не найдена для', value);
+    return false;
+}
     async function runTicketTransition() {
         console.log('[ST Helper] Запуск перехода статусов (Замена QR)');
 
