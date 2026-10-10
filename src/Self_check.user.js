@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ST Ticket Self-Check
 // @namespace    http://tampermonkey.net/
-// @version      1.9.1
+// @version      1.9.2
 // @description  Самопроверка + форма учёта + комментарии + переход статусов
 // @author       You
 // @match        https://st.yandex-team.ru/*
@@ -265,7 +265,7 @@
         });
     }
 
-    async function fillSuggest(labelText, value) {
+   async function fillSuggest(labelText, value) {
     const labels = document.querySelectorAll('label.editable-field__label');
     let input = null;
 
@@ -282,44 +282,65 @@
         return false;
     }
 
-    // Фокус и очистка
+    // Ввод значения
     input.focus();
     input.click();
-
     const nativeSetter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set;
     nativeSetter.call(input, '');
     input.dispatchEvent(new Event('input', { bubbles: true }));
     await sleep(300);
 
-    // Ввод целиком (без посимвольного — меньше шума)
     nativeSetter.call(input, value);
     input.dispatchEvent(new InputEvent('input', {
-        bubbles: true,
-        data: value,
-        inputType: 'insertText'
+        bubbles: true, data: value, inputType: 'insertText'
     }));
     input.dispatchEvent(new Event('change', { bubbles: true }));
 
-    // === Главное изменение: ждём 1 секунду перед поиском подсказки ===
-    await sleep(1000);
+    // === Поллинг: ждём появления подсказки до 5с, опрашивая каждые 200мс ===
+    const wanted = value.toLowerCase().replace(/\s+/g, '');
+    const deadline = Date.now() + 5000;
+    let picked = false;
 
-    // Ищем подсказку
-    const candidates = document.querySelectorAll(
-        '.g-label__content, .ToolsSuggest-ChosenContent, [class*="popup"] div, [class*="Suggest"] div, [class*="Menu"] div, li, span, div'
-    );
+    while (Date.now() < deadline) {
+        const candidates = document.querySelectorAll(
+            'div, li, span, [class*="Suggest"] *, [class*="Menu"] *, [class*="popup"] *, [role="option"], [class*="suggest"] *'
+        );
 
-    for (const el of candidates) {
-        const text = el.textContent.trim();
-        if (text === value || text.includes(value)) {
-            // Игнорируем сам input и слишком длинные блоки
-            if (el.tagName === 'INPUT' || text.length > 80) continue;
+        for (const el of candidates) {
+            // только видимые листовые элементы, не сам input
+            if (el.tagName === 'INPUT' || el.hasChildNodes()) continue;
 
-            el.click();
-            console.log('[ST Helper] Выбрано:', text);
-            await sleep(500);
-            return true;
+            const raw = el.textContent.trim();
+            if (!raw || raw.length === 0 || raw.length > 120) continue;
+
+            const norm = raw.toLowerCase().replace(/\s+/g, '');
+            if (norm === wanted || norm.includes(wanted)) {
+                el.click();
+                console.log('[ST Helper] Выбрано:', raw);
+                picked = true;
+                break;
+            }
+        }
+
+        if (picked) break;
+        await sleep(200);   // опросили один раз — подождали — снова
+    }
+
+    if (picked) {
+        await sleep(500);
+        return true;
+    }
+
+    // === Отладка: дамп того, что реально есть в DOM ===
+    console.warn('[ST Helper] Подсказка не найдена для', value);
+    const dump = new Set();
+    for (const el of document.querySelectorAll('div, li, span')) {
+        const t = (el.textContent || '').trim();
+        if (t && t.length < 90 && t.toLowerCase().includes(value.toLowerCase().slice(0, 6))) {
+            dump.add(t);
         }
     }
+    console.warn('[ST Helper] Строки, похожие на подсказки:', [...dump].slice(0, 30));
 
     // Для обычного текстового поля (Код дефекта)
     if (labelText === 'Код дефекта') {
@@ -329,7 +350,6 @@
         return true;
     }
 
-    console.warn('[ST Helper] Подсказка не найдена для', value);
     return false;
 }
     async function runTicketTransition() {
