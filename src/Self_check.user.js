@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ST Ticket Self-Check
 // @namespace    http://tampermonkey.net/
-// @version      1.8
+// @version      1.8.1
 // @description  Самопроверка + форма учёта + комментарии + переход статусов
 // @author       You
 // @match        https://st.yandex-team.ru/*
@@ -317,42 +317,58 @@
     }
 
     async function runTicketTransition() {
-        console.log('[ST Helper] Запуск перехода статусов (только Замена QR)');
+    console.log('[ST Helper] Запуск перехода статусов (Замена QR)');
 
-        await clickByText('Новый', 3000);
-        await sleep(800);
+    // 1. Новый (если есть)
+    await clickByText('Новый', 3000);
+    await sleep(800);
 
-        await clickByText('Взять в работу', 5000);
-        await sleep(1000);
+    // 2. Передать механикам
+    const toMechanics = await clickByText('Передать механикам', 6000);
+    if (toMechanics) {
+        await sleep(1200);
 
-        const ok = await clickByText('В проверку', 6000);
-        if (!ok) {
-            console.warn('Кнопка «В проверку» не найдена');
-            return;
-        }
-        await sleep(1300);
-
-        // Первый диалог
+        // В диалоге заполняем только Компоненты
         await fillSuggest('Компоненты', 'ROBOT_BODY_SKIN');
         await sleep(500);
-        await fillSuggest('Способ решения', 'CHANGE');
-        await sleep(500);
 
         await clickByText('Продолжить');
-        await sleep(1600);
-
-        // Закрыть (нужный)
-        await clickByText('Закрыть (нужный)', 6000);
-        await sleep(1300);
-
-        // Второй диалог
-        await fillSuggest('Код дефекта', '0');
-        await sleep(400);
-
-        await clickByText('Продолжить');
-        console.log('[ST Helper] Переход статусов завершён');
+        await sleep(1500);
     }
 
+    // 3. Взять в работу
+    await clickByText('Взять в работу', 6000);
+    await sleep(1000);
+
+    // 4. В проверку
+    const toReview = await clickByText('В проверку', 6000);
+    if (!toReview) {
+        console.warn('Кнопка «В проверку» не найдена');
+        return;
+    }
+    await sleep(1300);
+
+    // В этом диалоге Способ решения уже должен быть заполнен,
+    // но на всякий случай пробуем проставить Компоненты и CHANGE
+    await fillSuggest('Компоненты', 'ROBOT_BODY_SKIN');
+    await sleep(400);
+    await fillSuggest('Способ решения', 'CHANGE');
+    await sleep(400);
+
+    await clickByText('Продолжить');
+    await sleep(1600);
+
+    // 5. Закрыть (нужный)
+    await clickByText('Закрыть (нужный)', 6000);
+    await sleep(1300);
+
+    // 6. Финальный диалог — ставим Код дефекта = 0
+    await fillSuggest('Код дефекта', '0');
+    await sleep(400);
+
+    await clickByText('Продолжить');
+    console.log('[ST Helper] Переход статусов завершён');
+}
     window.addEventListener('message', async (event) => {
         if (!event.data) return;
 
