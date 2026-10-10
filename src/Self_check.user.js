@@ -1,11 +1,14 @@
 // ==UserScript==
 // @name         ST Ticket Self-Check
 // @namespace    http://tampermonkey.net/
-// @version      2.1
-// @description  Самопроверка + форма учёта + комментарии + переход статусов
+// @version      4.4
+// @description  Самопроверка + форма учёта + комментарии. Переходы/поля/резолюция — через API Stracker
 // @author       You
 // @match        https://st.yandex-team.ru/*
-// @grant        none
+// @grant        GM_xmlhttpRequest
+// @grant        GM_getValue
+// @grant        GM_setValue
+// @connect      st-api.yandex-team.ru
 // @downloadURL  https://raw.githubusercontent.com/Lgyniwka/Autofill-check/main/src/Self_check.user.js
 // @updateURL    https://raw.githubusercontent.com/Lgyniwka/Autofill-check/main/src/Self_check.user.js
 // ==/UserScript==
@@ -15,23 +18,195 @@
     'use strict';
 
 
-    // === Панель самопроверки ===
+    // =====================================================
+    //  Токен (окно при первом запуске, сохраняем)
+    // =====================================================
+    const TOKEN_STORE_KEY = 'st_token';
+    const TOKEN_URL = 'https://oauth.yandex-team.ru/authorize?response_type=token&client_id=5f671d781aca402ab7460fde4050267b';
+
+
+    let OAUTH_TOKEN = GM_getValue(TOKEN_STORE_KEY, '');
+
+
+    function saveToken(token) {
+        OAUTH_TOKEN = (token || '').trim();
+        if (OAUTH_TOKEN) GM_setValue(TOKEN_STORE_KEY, OAUTH_TOKEN);
+    }
+
+
+    function showTokenModal() {
+        if (document.getElementById('st-token-modal')) return;
+        const modal = document.createElement('div');
+        modal.id = 'st-token-modal';
+        modal.innerHTML = `
+            <div class="sttm-box">
+                <div class="sttm-title">Нужен OAuth-токен для API Stracker</div>
+                <div class="sttm-text">Скрипт использует API Stracker для полей, переходов статусов и резолюции.<br/>Вставь свой токен ниже.</div>
+                <a class="sttm-link" href="${TOKEN_URL}" target="_blank" rel="noopener">Получить токен</a>
+                <input type="password" id="sttm-input" placeholder="Вставьте access_token..." autocomplete="off" />
+                <div class="sttm-error"></div>
+                <div class="sttm-actions">
+                    <button id="sttm-save">Сохранить</button>
+                    <button id="sttm-later">Позже</button>
+                </div>
+            </div>
+        `;
+        const st = document.createElement('style');
+        st.textContent = `
+            #st-token-modal { position: fixed; inset: 0; z-index: 999999; background: rgba(0,0,0,0.55); display: flex; align-items: center; justify-content: center; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }
+            #st-token-modal .sttm-box { background: #1f1f1f; color: #eee; border-radius: 12px; padding: 20px 22px; width: 420px; max-width: 90%; box-shadow: 0 8px 30px rgba(0,0,0,0.5); }
+            #st-token-modal .sttm-title { font-size: 15px; font-weight: 600; margin-bottom: 8px; }
+            #st-token-modal .sttm-text { font-size: 13px; opacity: 0.85; line-height: 1.4; margin-bottom: 12px; }
+            #st-token-modal .sttm-link { display: inline-block; margin-bottom: 12px; color: #4d9fff; text-decoration: none; font-size: 13px; }
+            #st-token-modal .sttm-link:hover { text-decoration: underline; }
+            #st-token-modal #sttm-input { width: 100%; height: 34px; padding: 0 10px; border-radius: 6px; box-sizing: border-box; border: 1px solid #555; background: #2a2a2a; color: #eee; font-size: 13px; outline: none; }
+            #st-token-modal #sttm-input:focus { border-color: #3b82f6; }
+            #st-token-modal .sttm-error { color: #ef4444; font-size: 12px; min-height: 16px; margin-top: 6px; }
+            #st-token-modal .sttm-actions { display: flex; gap: 10px; margin-top: 10px; }
+            #st-token-modal .sttm-actions button { flex: 1; height: 34px; border: none; border-radius: 6px; font-size: 13px; cursor: pointer; }
+            #st-token-modal #sttm-save { background: #3b82f6; color: #fff; }
+            #st-token-modal #sttm-save:hover { background: #2563eb; }
+            #st-token-modal #sttm-later { background: #444; color: #ddd; }
+            #st-token-modal #sttm-later:hover { background: #555; }
+        `;
+        document.head.appendChild(st);
+        document.body.appendChild(modal);
+
+
+        const input = modal.querySelector('#sttm-input');
+        const errEl = modal.querySelector('.sttm-error');
+        input.focus();
+        modal.querySelector('#sttm-save').addEventListener('click', () => {
+            const val = input.value.trim();
+            if (!val) { errEl.textContent = 'Введите токен или нажмите «Получить токен».'; return; }
+            if (!/^[A-Za-z0-9_\-.]+$/.test(val)) { errEl.textContent = 'Токен содержит недопустимые символы. Проверь вставку.'; return; }
+            saveToken(val);
+            modal.remove();
+            console.log('[ST] Токен сохранён.');
+        });
+        modal.querySelector('#sttm-later').addEventListener('click', () => {
+            modal.remove();
+            console.warn('[ST] Токен не введён — API-функции не будут работать.');
+        });
+    }
+
+
+    // =====================================================
+    //  API Stracker
+    // =====================================================
+    function apiRequest(method, url, body) {
+        return new Promise((resolve, reject) => {
+            GM_xmlhttpRequest({
+                method, url,
+                headers: { 'Authorization': 'OAuth ' + OAUTH_TOKEN, 'Content-Type': 'application/json' },
+                data: body ? JSON.stringify(body) : undefined,
+                onload: (r) => {
+                    let json = null;
+                    try { json = JSON.parse(r.responseText); } catch (e) {}
+                    if (r.status >= 200 && r.status < 300) resolve({ status: r.status, data: json, text: r.responseText });
+                    else reject({ status: r.status, data: json, text: r.responseText });
+                },
+                onerror: (e) => reject({ status: 'net', text: String(e) })
+            });
+        });
+    }
+
+
+    // =====================================================
+    //  Поля через API
+    // =====================================================
+    const COMPONENT_IDS = { 'ROBOT_BODY_SKIN': 162077 };
+    const COMPONENT_VALUE = 'ROBOT_BODY_SKIN';
+    const THE_DEFECT_CODE_FIELD = '60df26695151a36df681d67b--theDefectCode'; // Код дефекта
+
+
+    async function setComponentApi(issueKey) {
+        const id = COMPONENT_IDS[COMPONENT_VALUE];
+        if (!id) { console.warn('[ST] Нет id для', COMPONENT_VALUE); return false; }
+        try {
+            await apiRequest('PATCH', `https://st-api.yandex-team.ru/v3/issues/${issueKey}`, { components: id });
+            console.log('[ST] Компонент установлен:', COMPONENT_VALUE, '=', id);
+            return true;
+        } catch (e) {
+            console.warn('[ST] PATCH компонента не прошёл:', e.status, String(e.text || '').slice(0, 300));
+            return false;
+        }
+    }
+
+
+    async function setSolutionViaApi(issueKey) {
+        try {
+            await apiRequest('PATCH', `https://st-api.yandex-team.ru/v3/issues/${issueKey}`, { solutionMethod: 'CHANGE' });
+            console.log('[ST] Способ решения установлен: CHANGE');
+            return true;
+        } catch (e) {
+            console.warn('[ST] PATCH solutionMethod не прошёл:', e.status, String(e.text || '').slice(0, 300));
+            return false;
+        }
+    }
+
+
+    async function setDefectCodeApi(issueKey, code = '0') {
+        try {
+            await apiRequest('PATCH', `https://st-api.yandex-team.ru/v3/issues/${issueKey}`, { [THE_DEFECT_CODE_FIELD]: code });
+            console.log('[ST] Код дефекта установлен:', code);
+            return true;
+        } catch (e) {
+            console.warn('[ST] PATCH кода дефекта не прошёл:', e.status, String(e.text || '').slice(0, 300));
+            return false;
+        }
+    }
+
+
+    // =====================================================
+    //  Переходы: список → найти по display → POST /_execute
+    // =====================================================
+    async function getTransitions(issueKey) {
+        try {
+            const r = await apiRequest('GET', `https://st-api.yandex-team.ru/v2/issues/${issueKey}/transitions`);
+            return (r.data && Array.isArray(r.data)) ? r.data : [];
+        } catch (e) {
+            console.warn('[ST] GET transitions ошибка:', e.status, String(e.text || '').slice(0, 300));
+            return [];
+        }
+    }
+
+
+    async function runTransitionByDisplay(issueKey, displayName, timeoutMs = 10000, body) {
+        if (!OAUTH_TOKEN) { showTokenModal(); return false; }
+        const start = Date.now();
+        while (Date.now() - start < timeoutMs) {
+            const list = await getTransitions(issueKey);
+            const t = list.find(x => (x.display || '').trim() === displayName);
+            if (t) {
+                const url = `https://st-api.yandex-team.ru/v3/issues/${issueKey}/transitions/${t.id}/_execute`;
+                console.log('[ST] Выполняю переход «' + displayName + '» через', url);
+                try {
+                    await apiRequest('POST', url, body || undefined);
+                    console.log('[ST] Переход выполнен:', displayName);
+                    return true;
+                } catch (e) {
+                    console.warn('[ST] Переход «' + displayName + '» не выполнен:', e.status, String(e.text || '').slice(0, 400));
+                    return false;
+                }
+            }
+            await sleep(600);
+        }
+        console.warn('[ST] Переход «' + displayName + '» не найден за отведённое время.');
+        return false;
+    }
+
+
+    // =====================================================
+    //  Панель самопроверки
+    // =====================================================
     const panel = document.createElement('div');
     panel.id = 'st-self-check';
     panel.innerHTML = `
         <div class="sch-header">Самопроверка</div>
-        <div class="sch-item" id="sch-components">
-            <span class="sch-dot"></span>
-            <span class="sch-text">Компоненты: ROBOT / LOGS</span>
-        </div>
-        <div class="sch-item" id="sch-comment">
-            <span class="sch-dot"></span>
-            <span class="sch-text">Комментарий от исполнителя</span>
-        </div>
-        <div class="sch-item" id="sch-sdcwh">
-            <span class="sch-dot"></span>
-            <span class="sch-text">Тикет запчастей (SDCWH)</span>
-        </div>
+        <div class="sch-item" id="sch-components"><span class="sch-dot"></span><span class="sch-text">Компоненты: ROBOT / LOGS</span></div>
+        <div class="sch-item" id="sch-comment"><span class="sch-dot"></span><span class="sch-text">Комментарий от исполнителя</span></div>
+        <div class="sch-item" id="sch-sdcwh"><span class="sch-dot"></span><span class="sch-text">Тикет запчастей (SDCWH)</span></div>
         <div class="sch-divider"></div>
         <div class="sch-form">
             <input id="sch-rover-input" type="text" placeholder="Rover ID" />
@@ -42,13 +217,7 @@
 
     const style = document.createElement('style');
     style.textContent = `
-        #st-self-check {
-            position: fixed; top: 80px; right: 20px; z-index: 99999;
-            background: #1f1f1f; color: #eee; border-radius: 10px;
-            padding: 10px 14px; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
-            font-size: 13px; box-shadow: 0 4px 20px rgba(0,0,0,0.35);
-            min-width: 240px; user-select: none; cursor: move;
-        }
+        #st-self-check { position: fixed; top: 80px; right: 20px; z-index: 99999; background: #1f1f1f; color: #eee; border-radius: 10px; padding: 10px 14px; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; font-size: 13px; box-shadow: 0 4px 20px rgba(0,0,0,0.35); min-width: 240px; user-select: none; cursor: move; }
         #st-self-check .sch-header { font-weight: 600; margin-bottom: 8px; font-size: 14px; opacity: 0.9; }
         #st-self-check .sch-item { display: flex; align-items: center; gap: 8px; margin: 6px 0; }
         #st-self-check .sch-dot { width: 12px; height: 12px; border-radius: 50%; background: #666; flex-shrink: 0; }
@@ -57,21 +226,15 @@
         #st-self-check .sch-text { line-height: 1.3; }
         #st-self-check .sch-divider { height: 1px; background: #444; margin: 10px 0; }
         #st-self-check .sch-form { display: flex; flex-direction: column; gap: 6px; }
-        #st-self-check #sch-rover-input {
-            width: 100%; height: 28px; padding: 0 8px; border-radius: 5px;
-            border: 1px solid #555; background: #2a2a2a; color: #eee; font-size: 13px; outline: none; box-sizing: border-box;
-        }
+        #st-self-check #sch-rover-input { width: 100%; height: 28px; padding: 0 8px; border-radius: 5px; border: 1px solid #555; background: #2a2a2a; color: #eee; font-size: 13px; outline: none; box-sizing: border-box; }
         #st-self-check #sch-rover-input:focus { border-color: #3b82f6; }
-        #st-self-check #sch-insert-btn {
-            height: 30px; border: none; border-radius: 5px; background: #3b82f6; color: white; font-size: 13px; cursor: pointer;
-        }
+        #st-self-check #sch-insert-btn { height: 30px; border: none; border-radius: 5px; background: #3b82f6; color: white; font-size: 13px; cursor: pointer; }
         #st-self-check #sch-insert-btn:hover { background: #2563eb; }
     `;
     document.head.appendChild(style);
     document.body.appendChild(panel);
 
 
-    // Перетаскивание
     let isDragging = false, offsetX, offsetY;
     panel.addEventListener('mousedown', e => {
         if (e.target.closest('.sch-item, .sch-form')) return;
@@ -92,7 +255,9 @@
     });
 
 
-    // === Проверки ===
+    // =====================================================
+    //  Проверки
+    // =====================================================
     function getFieldValue(title) {
         const titleEl = document.querySelector(`.FieldView-Title[title="${title}"]`);
         if (!titleEl) return null;
@@ -158,23 +323,20 @@
     }
 
 
-    // === Вставка формы учёта ===
+    // =====================================================
+    //  Вставка формы учёта (без изменений)
+    // =====================================================
     function getTicketKey() {
-        const match = location.pathname.match(/\/([A-Z0-9]+-\d+)/i);
-        return match ? match[1] : null;
+        const m = location.pathname.match(/\/([A-Z0-9]+-\d+)/i);
+        return m ? m[1] : null;
     }
 
 
     function clickSendButton() {
         const icon = document.querySelector('.comment-editor__send-icon');
-        if (icon) {
-            const btn = icon.closest('button');
-            if (btn) { btn.click(); return true; }
-        }
+        if (icon) { const btn = icon?.closest('button'); if (btn) { btn.click(); return true; } }
         for (const btn of document.querySelectorAll('button')) {
-            if (btn.textContent.trim() === 'Отправить') {
-                btn.click(); return true;
-            }
+            if (btn.textContent.trim() === 'Отправить') { btn.click(); return true; }
         }
         return false;
     }
@@ -261,14 +423,76 @@
     new MutationObserver(runCheck).observe(document.body, { childList: true, subtree: true });
 
 
-    // =====================================================
-    //  Вспомогательные функции
-    // =====================================================
+    if (!OAUTH_TOKEN) setTimeout(showTokenModal, 500);
 
 
-    function sleep(ms) {
-        return new Promise(r => setTimeout(r, ms));
+    function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
+
+
+    // =====================================================
+    //  Полный переход статусов — через API (Замена QR)
+    // =====================================================
+    async function runTicketTransition() {
+        console.log('[ST Helper] Переход статусов (Замена QR) — через API');
+        const issueKey = getTicketKey();
+        if (!issueKey) { console.warn('[ST] Тикет не определён'); return; }
+        if (!OAUTH_TOKEN) { showTokenModal(); return; }
+
+
+        // 0. Если не в «Новом» — переводим туда (если уже в Новом, перехода нет, идём дальше)
+        await runTransitionByDisplay(issueKey, 'Новый', 1500);
+
+
+        // 1. Компонент
+        await setComponentApi(issueKey);
+
+
+        // 2. Обработан (Передать механикам)
+        await runTransitionByDisplay(issueKey, 'Передать механикам');
+        // 3. В работе
+        await runTransitionByDisplay(issueKey, 'Взять в работу');
+        // 4. Способ решения
+        await setSolutionViaApi(issueKey);
+        // 5. Проверка
+        await runTransitionByDisplay(issueKey, 'В проверку');
+        // 6. Код дефекта
+        await setDefectCodeApi(issueKey, '0');
+        // 7. Закрыт (резолюция в теле перехода)
+        await runTransitionByDisplay(issueKey, 'Закрыть (нужный)', 10000, { resolution: 'fixed' });
+
+
+        console.log('[ST Helper] Переход статусов завершён');
     }
+
+
+    // =====================================================
+    //  Сообщения из iframe
+    // =====================================================
+    window.addEventListener('message', async (event) => {
+        if (!event.data) return;
+
+
+        if (event.data.type === 'ST_HELPER_ADD_COMMENT') {
+            const text = event.data.text;
+            if (!text) return;
+            const editor = document.querySelector('.ProseMirror.g-md-editor, .ProseMirror[contenteditable="true"]');
+            if (!editor) { console.warn('Редактор комментария не найден'); return; }
+            editor.focus();
+            editor.innerHTML = '';
+            document.execCommand('insertText', false, text);
+            setTimeout(() => {
+                const icon = document.querySelector('.comment-editor__send-icon');
+                if (icon) { icon.closest('button')?.click(); }
+                else { clickByText('Отправить'); }
+            }, 400);
+        }
+
+
+        if (event.data.type === 'ST_HELPER_TICKET_TRANSITION') {
+            await sleep(2000);
+            await runTicketTransition();
+        }
+    });
 
 
     function clickByText(text, timeout = 10000) {
@@ -278,250 +502,11 @@
                 for (const el of document.querySelectorAll('.g-button__text, button')) {
                     if (el.textContent.trim() === text) {
                         (el.closest('button') || el).click();
-                        clearInterval(timer);
-                        resolve(true);
-                        return;
+                        clearInterval(timer); resolve(true); return;
                     }
                 }
-                if (Date.now() - start > timeout) {
-                    clearInterval(timer);
-                    resolve(false);
-                }
+                if (Date.now() - start > timeout) { clearInterval(timer); resolve(false); }
             }, 250);
         });
     }
-
-
-    // === Заполнение поля через пару (кнопка «—» -> combobox -> Enter -> вариант -> «Сохранить») ===
-    async function setFieldPair(title, value) {
-        // 1. Находим заголовок поля в паре
-        const titleEl = document.querySelector(`.FieldView-Title[title="${title}"]`);
-        if (!titleEl) {
-            console.warn('[ST Helper] Поле не найдено:', title);
-            return false;
-        }
-
-        // 2. В контейнере ищем кнопку-редактирование со значением/«—»
-        const container = titleEl.closest('.FieldView') || titleEl.parentElement;
-        let editBtn = null;
-        for (const btn of container.querySelectorAll('button, [class*="g-button"]')) {
-            if (btn.textContent.trim() === '—' || btn.textContent.trim() === '–' || btn.textContent.trim() === '') {
-                editBtn = btn;
-                break;
-            }
-        }
-        if (!editBtn) {
-            console.warn('[ST Helper] Кнопка редактирования не найдена для', title);
-            return false;
-        }
-        editBtn.click();
-        await sleep(600);
-
-        // 3. Ищем combobox по aria-label=title
-        let input = document.querySelector(`input[aria-label="${title}"][role="combobox"]`);
-        if (!input) {
-            input = document.querySelector(`input[name="${title.toLowerCase()}"]`);
-        }
-        if (!input) {
-            const inputs = [...container.parentElement.querySelectorAll('input[role="combobox"]')];
-            input = inputs.find(i => i.getAttribute('aria-label') === title) || inputs[0];
-        }
-        if (!input) {
-            console.warn('[ST Helper] Combobox не найден для', title);
-            return false;
-        }
-
-        // 4. Заполняем значение
-        input.focus();
-        input.click();
-        const nativeSetter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set;
-        nativeSetter.call(input, '');
-        input.dispatchEvent(new Event('input', { bubbles: true }));
-        await sleep(300);
-
-        nativeSetter.call(input, value);
-        input.dispatchEvent(new InputEvent('input', { bubbles: true, data: value, inputType: 'insertText' }));
-        input.dispatchEvent(new Event('change', { bubbles: true }));
-        await sleep(400);
-
-        // 5. Жмём Enter — открывает/подтверждает выбор
-        input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', code: 'Enter', keyCode: 13, which: 13, bubbles: true, cancelable: true }));
-        input.dispatchEvent(new KeyboardEvent('keyup', { key: 'Enter', code: 'Enter', keyCode: 13, which: 13, bubbles: true, cancelable: true }));
-        await sleep(800);
-
-        // 6. Выбираем пункт из появившегося списка (точное совпадение)
-        const wanted = value.toLowerCase().replace(/\s+/g, '');
-        let picked = false;
-        const deadline = Date.now() + 4000;
-        while (Date.now() < deadline) {
-            let best = null;
-            for (const el of document.querySelectorAll('li, [role="option"], div, span')) {
-                const raw = (el.textContent || '').trim();
-                if (!raw || raw.length > 120) continue;
-                const norm = raw.toLowerCase().replace(/\s+/g, '');
-                if (norm === wanted) {
-                    if (!best || el.compareDocumentPosition(best) & Node.DOCUMENT_POSITION_CONTAINED_BY) {
-                        best = el;
-                    }
-                }
-            }
-            if (best) {
-                best.click();
-                picked = true;
-                console.log('[ST Helper] Выбрано:', best.textContent.trim());
-                break;
-            }
-            await sleep(200);
-        }
-        if (!picked) {
-            console.warn('[ST Helper] Вариант не найден для', value);
-            return false;
-        }
-        await sleep(500);
-
-        // 7. «Сохранить»
-        const saved = await clickByText('Сохранить', 4000);
-        if (saved) {
-            await sleep(800);
-            console.log('[ST Helper] Сохранено поле', title);
-            return true;
-        }
-        console.warn('[ST Helper] Кнопка «Сохранить» не найдена для', title);
-        return false;
-    }
-
-
-    // === Обычный саггест (Enter + выбор подходящего) ===
-    async function fillSuggest(labelText, value) {
-        const labels = document.querySelectorAll('label.editable-field__label');
-        let input = null;
-
-        for (const label of labels) {
-            if (label.textContent.trim() === labelText) {
-                const field = label.closest('.editable-field, .screen-field');
-                input = field?.querySelector('input[role="combobox"], input.g-text-input__control, input');
-                if (input) break;
-            }
-        }
-
-        if (!input) {
-            console.warn('[ST Helper] Не найден input для', labelText);
-            return false;
-        }
-
-        input.focus();
-        input.click();
-
-        const nativeSetter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set;
-        nativeSetter.call(input, '');
-        input.dispatchEvent(new Event('input', { bubbles: true }));
-        await sleep(300);
-
-        nativeSetter.call(input, value);
-        input.dispatchEvent(new InputEvent('input', { bubbles: true, data: value, inputType: 'insertText' }));
-        input.dispatchEvent(new Event('change', { bubbles: true }));
-        await sleep(400);
-
-        // Enter для подтверждения
-        input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', code: 'Enter', keyCode: 13, which: 13, bubbles: true, cancelable: true }));
-        await sleep(800);
-        return true;
-    }
-
-
-    async function runTicketTransition() {
-        console.log('[ST Helper] Запуск перехода статусов (Замена QR)');
-
-        // 1. Новый (если есть)
-        await clickByText('Новый', 3000);
-        await sleep(800);
-
-        // 2. Установить компоненту через пару полей
-        const compSet = await setFieldPair('Компоненты', 'ROBOT_BODY_SKIN');
-        if (!compSet) {
-            console.warn('[ST Helper] Компонента не проставилась, пробуем ещё раз');
-            await sleep(1000);
-            await setFieldPair('Компоненты', 'ROBOT_BODY_SKIN');
-        }
-
-        // 3. Передать механикам
-        const toMechanics = await clickByText('Передать механикам', 6000);
-        if (toMechanics) {
-            await sleep(1600);
-            await clickByText('Продолжить');
-            await sleep(1600);
-        }
-
-        // 4. Взять в работу
-        await clickByText('Взять в работу', 6000);
-        await sleep(1000);
-
-        // 5. В проверку
-        const toReview = await clickByText('В проверку', 6000);
-        if (!toReview) {
-            console.warn('Кнопка «В проверку» не найдена');
-            return;
-        }
-        await sleep(1300);
-
-        await fillSuggest('Компоненты', 'ROBOT_BODY_SKIN');
-        await sleep(400);
-        await fillSuggest('Способ решения', 'CHANGE');
-        await sleep(400);
-
-        await clickByText('Продолжить');
-        await sleep(1600);
-
-        // 6. Закрыть (нужный)
-        await clickByText('Закрыть (нужный)', 6000);
-        await sleep(1300);
-
-        // 7. Финальный диалог — Код дефекта
-        await fillSuggest('Код дефекта', '0');
-        await sleep(400);
-
-        await clickByText('Продолжить');
-        console.log('[ST Helper] Переход статусов завершён');
-    }
-
-
-    // =====================================================
-    //  Сообщения из iframe
-    // =====================================================
-
-
-    window.addEventListener('message', async (event) => {
-        if (!event.data) return;
-
-        // Комментарий
-        if (event.data.type === 'ST_HELPER_ADD_COMMENT') {
-            const text = event.data.text;
-            if (!text) return;
-
-            const editor = document.querySelector('.ProseMirror.g-md-editor, .ProseMirror[contenteditable="true"]');
-            if (!editor) {
-                console.warn('Редактор комментария не найден');
-                return;
-            }
-
-            editor.focus();
-            editor.innerHTML = '';
-            document.execCommand('insertText', false, text);
-
-            setTimeout(() => {
-                const icon = document.querySelector('.comment-editor__send-icon');
-                if (icon) {
-                    icon.closest('button')?.click();
-                } else {
-                    clickByText('Отправить');
-                }
-            }, 400);
-        }
-
-        // Переход статусов (только от Замена QR)
-        if (event.data.type === 'ST_HELPER_TICKET_TRANSITION') {
-            await sleep(2000);
-            await runTicketTransition();
-        }
-    });
 })();
