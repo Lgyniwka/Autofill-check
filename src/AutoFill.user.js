@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         Accounting Form AutoFill
 // @namespace    https://github.com/Lgyniwka/Autofill-check
-// @version      1.5
-// @description  Плавающая панель + отправка комментария
+// @version      1.6
+// @description  Плавающая панель + отправка комментария + переход статусов только для Замена QR
 // @author       You
 // @match        https://tools.sdc.yandex-team.ru/accounting-fleet-works*
 // @grant        none
@@ -54,7 +54,7 @@
             panel.style.top = saved.top + 'px';
             panel.style.right = 'auto';
         }
-    } catch(e) {}
+    } catch (e) {}
 
     let isDragging = false, offsetX, offsetY;
     panel.addEventListener('mousedown', e => {
@@ -78,7 +78,6 @@
         localStorage.setItem(STORAGE_KEY, JSON.stringify({ left: rect.left, top: rect.top }));
     });
 
-    // === Функции ===
     function forceSetValue(input, value) {
         input.focus();
         const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set;
@@ -100,14 +99,13 @@
     }
 
     function sendCommentToParent(text) {
-        // Отправляем сообщение родительской странице
         window.parent.postMessage({
             type: 'ST_HELPER_ADD_COMMENT',
             text: text
         }, '*');
     }
 
-    function doAction(btn, searchText, matchText, commentText) {
+    function doAction(btn, searchText, matchText, commentText, action) {
         const input = document.querySelector('input[placeholder="Добавить работы"]');
         if (!input) return alert('Поле не найдено');
 
@@ -128,9 +126,20 @@
                         btn.classList.add(saved ? 'success' : 'warning');
                         btn.textContent = saved ? 'Сохранено!' : 'Выбрано';
 
-                        // Отправляем комментарий
                         if (saved) {
-                            setTimeout(() => sendCommentToParent(commentText), 600);
+                            setTimeout(() => {
+                                // Всегда отправляем комментарий
+                                sendCommentToParent(commentText);
+
+                                // Переход статусов — ТОЛЬКО для Замена QR
+                                if (action === 'stickers') {
+                                    setTimeout(() => {
+                                        window.parent.postMessage({
+                                            type: 'ST_HELPER_TICKET_TRANSITION'
+                                        }, '*');
+                                    }, 1500);
+                                }
+                            }, 600);
                         }
 
                         setTimeout(() => {
@@ -160,13 +169,13 @@
         const action = btn.dataset.action;
 
         if (action === 'stickers') {
-            doAction(btn, 'Замена наклеек', 'Замена наклеек', 'Наклеили новый QR');
+            doAction(btn, 'Замена наклеек', 'Замена наклеек', 'Наклеили новый QR', action);
         }
         if (action === 'ppr') {
-            doAction(btn, 'ППР', 'ППР робота', 'Сделали ППР');
+            doAction(btn, 'ППР', 'ППР робота', 'Сделали ППР', action);
         }
         if (action === 'microphone') {
-            doAction(btn, 'жгута микрофонов', 'Установка жгута микрофонов', 'Установили жгут микрофонов');
+            doAction(btn, 'жгута микрофонов', 'Установка жгута микрофонов', 'Установили жгут микрофонов', action);
         }
     });
 })();
