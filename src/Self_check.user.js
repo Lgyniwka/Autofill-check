@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ST Ticket Self-Check
 // @namespace    http://tampermonkey.net/
-// @version      4.4
+// @version      4.5
 // @description  Самопроверка + форма учёта + комментарии. Переходы/поля/резолюция — через API Stracker
 // @author       You
 // @match        https://st.yandex-team.ru/*
@@ -430,9 +430,34 @@
 
 
     // =====================================================
+    //  Уведомления и таймер
+    // =====================================================
+    function showToast(message, duration = 6000) {
+        let toast = document.getElementById('st-helper-toast');
+        const st = document.createElement('style');
+        if (!toast) {
+            toast = document.createElement('div');
+            toast.id = 'st-helper-toast';
+            st.textContent = `#st-helper-toast{position:fixed;left:50%;bottom:28px;transform:translateX(-50%);z-index:999999;background:#1f1f1f;color:#eee;padding:12px 18px;border-radius:8px;font:13px/1.4 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;box-shadow:0 6px 24px rgba(0,0,0,.4);opacity:0;transition:opacity .25s;pointer-events:none;max-width:80vw;text-align:center}`;
+            document.head.appendChild(st);
+            document.body.appendChild(toast);
+        }
+        toast.textContent = message;
+        toast.style.transition = 'none';
+        toast.style.opacity = '0';
+        void toast.offsetWidth;
+        toast.style.transition = 'opacity .25s';
+        toast.style.opacity = '1';
+        clearTimeout(toast._t);
+        toast._t = setTimeout(() => { toast.style.opacity = '0'; }, duration);
+    }
+
+
+    // =====================================================
     //  Полный переход статусов — через API (Замена QR)
     // =====================================================
-    async function runTicketTransition() {
+    async function runTicketTransition(startedAt) {
+        startedAt = startedAt || Date.now();
         console.log('[ST Helper] Переход статусов (Замена QR) — через API');
         const issueKey = getTicketKey();
         if (!issueKey) { console.warn('[ST] Тикет не определён'); return; }
@@ -461,7 +486,9 @@
         await runTransitionByDisplay(issueKey, 'Закрыть (нужный)', 10000, { resolution: 'fixed' });
 
 
-        console.log('[ST Helper] Переход статусов завершён');
+        const elapsedSec = ((Date.now() - startedAt) / 1000).toFixed(1);
+        console.log('[ST Helper] Переход статусов завершён за ' + elapsedSec + ' сек');
+        showToast('Замена QR: готово за ' + elapsedSec + ' сек', 7000);
     }
 
 
@@ -489,8 +516,9 @@
 
 
         if (event.data.type === 'ST_HELPER_TICKET_TRANSITION') {
+            const startedAt = Date.now();
             await sleep(2000);
-            await runTicketTransition();
+            await runTicketTransition(startedAt);
         }
     });
 
