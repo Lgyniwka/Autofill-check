@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ST Ticket Self-Check
 // @namespace    http://tampermonkey.net/
-// @version      1.9.3
+// @version      2.0
 // @description  Самопроверка + форма учёта + комментарии + переход статусов
 // @author       You
 // @match        https://st.yandex-team.ru/*
@@ -10,8 +10,10 @@
 // @updateURL    https://raw.githubusercontent.com/Lgyniwka/Autofill-check/main/src/Self_check.user.js
 // ==/UserScript==
 
+
 (function () {
     'use strict';
+
 
     // === Панель самопроверки ===
     const panel = document.createElement('div');
@@ -36,6 +38,7 @@
             <button id="sch-insert-btn">Вставить форму учёта</button>
         </div>
     `;
+
 
     const style = document.createElement('style');
     style.textContent = `
@@ -67,6 +70,7 @@
     document.head.appendChild(style);
     document.body.appendChild(panel);
 
+
     // Перетаскивание
     let isDragging = false, offsetX, offsetY;
     panel.addEventListener('mousedown', e => {
@@ -87,6 +91,7 @@
         panel.style.cursor = 'move';
     });
 
+
     // === Проверки ===
     function getFieldValue(title) {
         const titleEl = document.querySelector(`.FieldView-Title[title="${title}"]`);
@@ -96,12 +101,14 @@
         return bubble ? bubble.textContent.trim() : null;
     }
 
+
     function checkComponents() {
         const value = getFieldValue('Компоненты');
         if (!value) return false;
         const upper = value.toUpperCase();
         return upper.includes('ROBOT') || upper.includes('LOGS');
     }
+
 
     function checkExecutorComment() {
         const executor = getFieldValue('Исполнитель');
@@ -117,12 +124,14 @@
         return false;
     }
 
+
     function checkSdcwhTicket() {
         for (const el of document.querySelectorAll('.issue-key__full-key')) {
             if (el.textContent.trim().startsWith('SDCWH-')) return true;
         }
         return /SDCWH-\d+/i.test(document.body.innerText);
     }
+
 
     function updateUI(ok1, ok2, ok3) {
         const set = (id, ok) => {
@@ -134,6 +143,7 @@
         set('sch-sdcwh', ok3);
     }
 
+
     function fillRoverFromTicket() {
         const input = document.getElementById('sch-rover-input');
         if (!input || input.value.trim()) return;
@@ -141,16 +151,19 @@
         if (rover) input.value = rover;
     }
 
+
     function runCheck() {
         updateUI(checkComponents(), checkExecutorComment(), checkSdcwhTicket());
         fillRoverFromTicket();
     }
+
 
     // === Вставка формы учёта ===
     function getTicketKey() {
         const match = location.pathname.match(/\/([A-Z0-9]+-\d+)/i);
         return match ? match[1] : null;
     }
+
 
     function clickSendButton() {
         const icon = document.querySelector('.comment-editor__send-icon');
@@ -166,6 +179,7 @@
         return false;
     }
 
+
     function scrollToNewComment() {
         setTimeout(() => {
             const comments = [...document.querySelectorAll('.comments article.comment')].reverse();
@@ -174,22 +188,27 @@
         }, 700);
     }
 
+
     function insertAccountingForm() {
         const roverInput = document.getElementById('sch-rover-input');
         let rover = roverInput.value.trim() || getFieldValue('Ровер') || '';
         roverInput.value = rover;
 
+
         const ticket = getTicketKey();
         if (!rover) return alert('Не найден номер ровера');
         if (!ticket) return alert('Не удалось определить ключ тикета');
 
+
         const iframeCode = `/iframe/(src="https://tools.sdc.yandex-team.ru/accounting-fleet-works?rover=${rover}&ticket=${ticket}&platform=robot_r3&event_id=" width="1000px" height="600px" frameborder="0")`;
+
 
         const selectors = [
             '.comment-form textarea', '.CommentEditor textarea',
             '[data-qa="comment-editor"] textarea', '.g-text-area__control',
             'textarea[placeholder*="комментарий" i]', '.ProseMirror', '[contenteditable="true"]'
         ];
+
 
         let inserted = false;
         for (const sel of selectors) {
@@ -208,10 +227,12 @@
             }
         }
 
+
         if (!inserted) {
             navigator.clipboard.writeText(iframeCode);
             return alert('Скопировано в буфер');
         }
+
 
         setTimeout(() => {
             const sent = clickSendButton();
@@ -231,19 +252,24 @@
         }, 400);
     }
 
+
     document.getElementById('sch-insert-btn').addEventListener('click', insertAccountingForm);
+
 
     runCheck();
     setInterval(runCheck, 2000);
     new MutationObserver(runCheck).observe(document.body, { childList: true, subtree: true });
 
+
     // =====================================================
-    //  Вспомогательные функции для переходов
+    //  Вспомогательные функции
     // =====================================================
+
 
     function sleep(ms) {
         return new Promise(r => setTimeout(r, ms));
     }
+
 
     function clickByText(text, timeout = 10000) {
         return new Promise(resolve => {
@@ -265,102 +291,133 @@
         });
     }
 
-   async function fillSuggest(labelText, value) {
-    const labels = document.querySelectorAll('label.editable-field__label');
-    let input = null;
 
-    for (const label of labels) {
-        if (label.textContent.trim() === labelText) {
-            const field = label.closest('.editable-field, .screen-field');
-            input = field?.querySelector('input[role="combobox"], input.g-text-input__control, input');
-            if (input) break;
-        }
+    // === Эмуляция клика мышью в координатах ===
+    function mouseClick(el, x, y) {
+        const rect = el.getBoundingClientRect();
+        const cx = x ?? rect.left + rect.width / 2;
+        const cy = y ?? rect.top + rect.height / 2;
+
+        const opts = { bubbles: true, cancelable: true, clientX: cx, clientY: cy, view: window };
+
+        el.dispatchEvent(new MouseEvent('mouseover', opts));
+        el.dispatchEvent(new MouseEvent('mouseenter', opts));
+        el.dispatchEvent(new MouseEvent('mousemove', opts));
+        el.dispatchEvent(new MouseEvent('mousedown', { ...opts, button: 0 }));
+
+        window.addEventListener('mouseup', () => {
+            window.dispatchEvent(new MouseEvent('mouseup', { ...opts, button: 0 }));
+        }, { once: true });
+
+        el.dispatchEvent(new MouseEvent('mouseup', { ...opts, button: 0 }));
+        el.dispatchEvent(new MouseEvent('click', { ...opts, button: 0 }));
     }
 
-    if (!input) {
-        console.warn('[ST Helper] Не найден input для', labelText);
-        return false;
-    }
 
-    // Фокус и очистка
-    input.focus();
-    input.click();
+    async function fillSuggest(labelText, value) {
+        const labels = document.querySelectorAll('label.editable-field__label');
+        let input = null;
 
-    const nativeSetter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set;
-    nativeSetter.call(input, '');
-    input.dispatchEvent(new Event('input', { bubbles: true }));
-    await sleep(300);
-
-    // Ввод целиком
-    nativeSetter.call(input, value);
-    input.dispatchEvent(new InputEvent('input', {
-        bubbles: true,
-        data: value,
-        inputType: 'insertText'
-    }));
-    input.dispatchEvent(new Event('change', { bubbles: true }));
-
-    // === Поллинг: ждём появления подсказки до 5с ===
-    const wanted = value.toLowerCase().replace(/\s+/g, '');
-    const deadline = Date.now() + 5000;
-    let picked = false;
-
-    while (Date.now() < deadline) {
-        const candidates = document.querySelectorAll(
-            'div, li, span, button, [role="option"]'
-        );
-
-        // Выбираем самый глубокий элемент среди тех, чей текст точно равен wanted
-        let best = null;
-        for (const el of candidates) {
-            const raw = (el.textContent || '').trim();
-            if (!raw) continue;
-            const norm = raw.toLowerCase().replace(/\s+/g, '');
-            if (norm === wanted) {
-                if (!best || el.compareDocumentPosition(best) &
-                    Node.DOCUMENT_POSITION_CONTAINED_BY) {
-                    best = el;   // самый вложенный
-                }
+        for (const label of labels) {
+            if (label.textContent.trim() === labelText) {
+                const field = label.closest('.editable-field, .screen-field');
+                input = field?.querySelector('input[role="combobox"], input.g-text-input__control, input');
+                if (input) break;
             }
         }
 
-        if (best) {
-            best.click();
-            console.log('[ST Helper] Выбрано:', best.textContent.trim());
-            picked = true;
-            break;
+        if (!input) {
+            console.warn('[ST Helper] Не найден input для', labelText);
+            return false;
         }
 
-        await sleep(200);
-    }
+        // Фокус и очистка
+        input.focus();
+        input.click();
 
-    if (picked) {
-        await sleep(500);
-        return true;
-    }
-
-    // === Отладка: дамп того, что реально есть в DOM ===
-    console.warn('[ST Helper] Подсказка не найдена для', value);
-    const dump = new Set();
-    for (const el of document.querySelectorAll('div, li, span')) {
-        const t = (el.textContent || '').trim();
-        if (t && t.length < 90 && t.toLowerCase().includes(value.toLowerCase().slice(0, 6))) {
-            dump.add(t);
-        }
-    }
-    console.warn('[ST Helper] Строки, похожие на подсказки:', [...dump].slice(0, 30));
-
-    // Для обычного текстового поля (Код дефекта)
-    if (labelText === 'Код дефекта') {
-        nativeSetter.call(input, value);
+        const nativeSetter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set;
+        nativeSetter.call(input, '');
         input.dispatchEvent(new Event('input', { bubbles: true }));
+        await sleep(300);
+
+        // Ввод целиком
+        nativeSetter.call(input, value);
+        input.dispatchEvent(new InputEvent('input', {
+            bubbles: true,
+            data: value,
+            inputType: 'insertText'
+        }));
         input.dispatchEvent(new Event('change', { bubbles: true }));
-        return true;
+
+        // === Поллинг: ждём появления подсказки до 5с ===
+        const wanted = value.toLowerCase().replace(/\s+/g, '');
+        const deadline = Date.now() + 5000;
+        let picked = false;
+
+        while (Date.now() < deadline) {
+            const candidates = document.querySelectorAll(
+                'div, li, span, button, [role="option"]'
+            );
+
+            // Самый глубокий элемент, чей текст точно равен wanted
+            let best = null;
+            for (const el of candidates) {
+                const raw = (el.textContent || '').trim();
+                if (!raw) continue;
+                const norm = raw.toLowerCase().replace(/\s+/g, '');
+                if (norm === wanted) {
+                    if (!best || el.compareDocumentPosition(best) &
+                        Node.DOCUMENT_POSITION_CONTAINED_BY) {
+                        best = el;
+                    }
+                }
+            }
+
+            if (best) {
+                // дать отрисоваться, затем клик мыши по точке перехвата в DOM
+                await sleep(150);
+                const rect = best.getBoundingClientRect();
+                const cx = rect.left + rect.width / 2;
+                const cy = rect.top + rect.height / 2;
+                const hit = document.elementFromPoint(cx, cy);
+                mouseClick(hit || best);
+                console.log('[ST Helper] Выбрано (мышь):', best.textContent.trim());
+                picked = true;
+                break;
+            }
+
+            await sleep(200);
+        }
+
+        if (picked) {
+            await sleep(500);
+            return true;
+        }
+
+        // === Отладка: дамп реального DOM ===
+        console.warn('[ST Helper] Подсказка не найдена для', value);
+        const dump = new Set();
+        for (const el of document.querySelectorAll('div, li, span')) {
+            const t = (el.textContent || '').trim();
+            if (t && t.length < 90 && t.toLowerCase().includes(value.toLowerCase().slice(0, 6))) {
+                dump.add(t);
+            }
+        }
+        console.warn('[ST Helper] Строки, похожие на подсказки:', [...dump].slice(0, 30));
+
+        // Для обычного текстового поля (Код дефекта)
+        if (labelText === 'Код дефекта') {
+            nativeSetter.call(input, value);
+            input.dispatchEvent(new Event('input', { bubbles: true }));
+            input.dispatchEvent(new Event('change', { bubbles: true }));
+            return true;
+        }
+
+        console.warn('[ST Helper] Подсказка не найдена для', value);
+        return false;
     }
 
-    console.warn('[ST Helper] Подсказка не найдена для', value);
-    return false;
-}
+
     async function runTicketTransition() {
         console.log('[ST Helper] Запуск перехода статусов (Замена QR)');
 
@@ -416,9 +473,11 @@
         console.log('[ST Helper] Переход статусов завершён');
     }
 
+
     // =====================================================
     //  Сообщения из iframe
     // =====================================================
+
 
     window.addEventListener('message', async (event) => {
         if (!event.data) return;
