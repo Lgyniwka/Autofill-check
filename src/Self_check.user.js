@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ST Ticket Self-Check
 // @namespace    http://tampermonkey.net/
-// @version      2.0
+// @version      2.1
 // @description  Самопроверка + форма учёта + комментарии + переход статусов
 // @author       You
 // @match        https://st.yandex-team.ru/*
@@ -292,28 +292,106 @@
     }
 
 
-    // === Эмуляция клика мышью в координатах ===
-    function mouseClick(el, x, y) {
-        const rect = el.getBoundingClientRect();
-        const cx = x ?? rect.left + rect.width / 2;
-        const cy = y ?? rect.top + rect.height / 2;
+    // === Заполнение поля через пару (кнопка «—» -> combobox -> Enter -> вариант -> «Сохранить») ===
+    async function setFieldPair(title, value) {
+        // 1. Находим заголовок поля в паре
+        const titleEl = document.querySelector(`.FieldView-Title[title="${title}"]`);
+        if (!titleEl) {
+            console.warn('[ST Helper] Поле не найдено:', title);
+            return false;
+        }
 
-        const opts = { bubbles: true, cancelable: true, clientX: cx, clientY: cy, view: window };
+        // 2. В контейнере ищем кнопку-редактирование со значением/«—»
+        const container = titleEl.closest('.FieldView') || titleEl.parentElement;
+        let editBtn = null;
+        for (const btn of container.querySelectorAll('button, [class*="g-button"]')) {
+            if (btn.textContent.trim() === '—' || btn.textContent.trim() === '–' || btn.textContent.trim() === '') {
+                editBtn = btn;
+                break;
+            }
+        }
+        if (!editBtn) {
+            console.warn('[ST Helper] Кнопка редактирования не найдена для', title);
+            return false;
+        }
+        editBtn.click();
+        await sleep(600);
 
-        el.dispatchEvent(new MouseEvent('mouseover', opts));
-        el.dispatchEvent(new MouseEvent('mouseenter', opts));
-        el.dispatchEvent(new MouseEvent('mousemove', opts));
-        el.dispatchEvent(new MouseEvent('mousedown', { ...opts, button: 0 }));
+        // 3. Ищем combobox по aria-label=title
+        let input = document.querySelector(`input[aria-label="${title}"][role="combobox"]`);
+        if (!input) {
+            input = document.querySelector(`input[name="${title.toLowerCase()}"]`);
+        }
+        if (!input) {
+            const inputs = [...container.parentElement.querySelectorAll('input[role="combobox"]')];
+            input = inputs.find(i => i.getAttribute('aria-label') === title) || inputs[0];
+        }
+        if (!input) {
+            console.warn('[ST Helper] Combobox не найден для', title);
+            return false;
+        }
 
-        window.addEventListener('mouseup', () => {
-            window.dispatchEvent(new MouseEvent('mouseup', { ...opts, button: 0 }));
-        }, { once: true });
+        // 4. Заполняем значение
+        input.focus();
+        input.click();
+        const nativeSetter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set;
+        nativeSetter.call(input, '');
+        input.dispatchEvent(new Event('input', { bubbles: true }));
+        await sleep(300);
 
-        el.dispatchEvent(new MouseEvent('mouseup', { ...opts, button: 0 }));
-        el.dispatchEvent(new MouseEvent('click', { ...opts, button: 0 }));
+        nativeSetter.call(input, value);
+        input.dispatchEvent(new InputEvent('input', { bubbles: true, data: value, inputType: 'insertText' }));
+        input.dispatchEvent(new Event('change', { bubbles: true }));
+        await sleep(400);
+
+        // 5. Жмём Enter — открывает/подтверждает выбор
+        input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', code: 'Enter', keyCode: 13, which: 13, bubbles: true, cancelable: true }));
+        input.dispatchEvent(new KeyboardEvent('keyup', { key: 'Enter', code: 'Enter', keyCode: 13, which: 13, bubbles: true, cancelable: true }));
+        await sleep(800);
+
+        // 6. Выбираем пункт из появившегося списка (точное совпадение)
+        const wanted = value.toLowerCase().replace(/\s+/g, '');
+        let picked = false;
+        const deadline = Date.now() + 4000;
+        while (Date.now() < deadline) {
+            let best = null;
+            for (const el of document.querySelectorAll('li, [role="option"], div, span')) {
+                const raw = (el.textContent || '').trim();
+                if (!raw || raw.length > 120) continue;
+                const norm = raw.toLowerCase().replace(/\s+/g, '');
+                if (norm === wanted) {
+                    if (!best || el.compareDocumentPosition(best) & Node.DOCUMENT_POSITION_CONTAINED_BY) {
+                        best = el;
+                    }
+                }
+            }
+            if (best) {
+                best.click();
+                picked = true;
+                console.log('[ST Helper] Выбрано:', best.textContent.trim());
+                break;
+            }
+            await sleep(200);
+        }
+        if (!picked) {
+            console.warn('[ST Helper] Вариант не найден для', value);
+            return false;
+        }
+        await sleep(500);
+
+        // 7. «Сохранить»
+        const saved = await clickByText('Сохранить', 4000);
+        if (saved) {
+            await sleep(800);
+            console.log('[ST Helper] Сохранено поле', title);
+            return true;
+        }
+        console.warn('[ST Helper] Кнопка «Сохранить» не найдена для', title);
+        return false;
     }
 
 
+    // === Обычный саггест (Enter + выбор подходящего) ===
     async function fillSuggest(labelText, value) {
         const labels = document.querySelectorAll('label.editable-field__label');
         let input = null;
@@ -331,7 +409,6 @@
             return false;
         }
 
-        // Фокус и очистка
         input.focus();
         input.click();
 
@@ -340,81 +417,15 @@
         input.dispatchEvent(new Event('input', { bubbles: true }));
         await sleep(300);
 
-        // Ввод целиком
         nativeSetter.call(input, value);
-        input.dispatchEvent(new InputEvent('input', {
-            bubbles: true,
-            data: value,
-            inputType: 'insertText'
-        }));
+        input.dispatchEvent(new InputEvent('input', { bubbles: true, data: value, inputType: 'insertText' }));
         input.dispatchEvent(new Event('change', { bubbles: true }));
+        await sleep(400);
 
-        // === Поллинг: ждём появления подсказки до 5с ===
-        const wanted = value.toLowerCase().replace(/\s+/g, '');
-        const deadline = Date.now() + 5000;
-        let picked = false;
-
-        while (Date.now() < deadline) {
-            const candidates = document.querySelectorAll(
-                'div, li, span, button, [role="option"]'
-            );
-
-            // Самый глубокий элемент, чей текст точно равен wanted
-            let best = null;
-            for (const el of candidates) {
-                const raw = (el.textContent || '').trim();
-                if (!raw) continue;
-                const norm = raw.toLowerCase().replace(/\s+/g, '');
-                if (norm === wanted) {
-                    if (!best || el.compareDocumentPosition(best) &
-                        Node.DOCUMENT_POSITION_CONTAINED_BY) {
-                        best = el;
-                    }
-                }
-            }
-
-            if (best) {
-                // дать отрисоваться, затем клик мыши по точке перехвата в DOM
-                await sleep(150);
-                const rect = best.getBoundingClientRect();
-                const cx = rect.left + rect.width / 2;
-                const cy = rect.top + rect.height / 2;
-                const hit = document.elementFromPoint(cx, cy);
-                mouseClick(hit || best);
-                console.log('[ST Helper] Выбрано (мышь):', best.textContent.trim());
-                picked = true;
-                break;
-            }
-
-            await sleep(200);
-        }
-
-        if (picked) {
-            await sleep(500);
-            return true;
-        }
-
-        // === Отладка: дамп реального DOM ===
-        console.warn('[ST Helper] Подсказка не найдена для', value);
-        const dump = new Set();
-        for (const el of document.querySelectorAll('div, li, span')) {
-            const t = (el.textContent || '').trim();
-            if (t && t.length < 90 && t.toLowerCase().includes(value.toLowerCase().slice(0, 6))) {
-                dump.add(t);
-            }
-        }
-        console.warn('[ST Helper] Строки, похожие на подсказки:', [...dump].slice(0, 30));
-
-        // Для обычного текстового поля (Код дефекта)
-        if (labelText === 'Код дефекта') {
-            nativeSetter.call(input, value);
-            input.dispatchEvent(new Event('input', { bubbles: true }));
-            input.dispatchEvent(new Event('change', { bubbles: true }));
-            return true;
-        }
-
-        console.warn('[ST Helper] Подсказка не найдена для', value);
-        return false;
+        // Enter для подтверждения
+        input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', code: 'Enter', keyCode: 13, which: 13, bubbles: true, cancelable: true }));
+        await sleep(800);
+        return true;
     }
 
 
@@ -425,27 +436,27 @@
         await clickByText('Новый', 3000);
         await sleep(800);
 
-        // 2. Передать механикам
+        // 2. Установить компоненту через пару полей
+        const compSet = await setFieldPair('Компоненты', 'ROBOT_BODY_SKIN');
+        if (!compSet) {
+            console.warn('[ST Helper] Компонента не проставилась, пробуем ещё раз');
+            await sleep(1000);
+            await setFieldPair('Компоненты', 'ROBOT_BODY_SKIN');
+        }
+
+        // 3. Передать механикам
         const toMechanics = await clickByText('Передать механикам', 6000);
         if (toMechanics) {
-            await sleep(1500);
-
-            let filled = await fillSuggest('Компоненты', 'ROBOT_BODY_SKIN');
-            if (!filled) {
-                await sleep(800);
-                filled = await fillSuggest('Компоненты', 'ROBOT_BODY_SKIN');
-            }
-
-            await sleep(600);
+            await sleep(1600);
             await clickByText('Продолжить');
             await sleep(1600);
         }
 
-        // 3. Взять в работу
+        // 4. Взять в работу
         await clickByText('Взять в работу', 6000);
         await sleep(1000);
 
-        // 4. В проверку
+        // 5. В проверку
         const toReview = await clickByText('В проверку', 6000);
         if (!toReview) {
             console.warn('Кнопка «В проверку» не найдена');
@@ -461,11 +472,11 @@
         await clickByText('Продолжить');
         await sleep(1600);
 
-        // 5. Закрыть (нужный)
+        // 6. Закрыть (нужный)
         await clickByText('Закрыть (нужный)', 6000);
         await sleep(1300);
 
-        // 6. Финальный диалог — Код дефекта
+        // 7. Финальный диалог — Код дефекта
         await fillSuggest('Код дефекта', '0');
         await sleep(400);
 
