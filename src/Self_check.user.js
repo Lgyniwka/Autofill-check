@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ST Ticket Self-Check
 // @namespace    http://tampermonkey.net/
-// @version      1.8.1
+// @version      1.9
 // @description  Самопроверка + форма учёта + комментарии + переход статусов
 // @author       You
 // @match        https://st.yandex-team.ru/*
@@ -238,7 +238,7 @@
     new MutationObserver(runCheck).observe(document.body, { childList: true, subtree: true });
 
     // =====================================================
-    //  Обработка сообщений из iframe
+    //  Вспомогательные функции для переходов
     // =====================================================
 
     function sleep(ms) {
@@ -265,16 +265,6 @@
         });
     }
 
-    function forceSetReactValue(input, value) {
-        input.focus();
-        const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set;
-        setter.call(input, value);
-        input.value = value;
-        input.dispatchEvent(new Event('focus', { bubbles: true }));
-        input.dispatchEvent(new InputEvent('input', { bubbles: true, data: value, inputType: 'insertText' }));
-        input.dispatchEvent(new Event('change', { bubbles: true }));
-    }
-
     async function fillSuggest(labelText, value) {
         const labels = document.querySelectorAll('label.editable-field__label');
         let input = null;
@@ -282,93 +272,124 @@
         for (const label of labels) {
             if (label.textContent.trim() === labelText) {
                 const field = label.closest('.editable-field, .screen-field');
-                input = field?.querySelector('input[role="combobox"], input.g-text-input__control');
+                input = field?.querySelector('input[role="combobox"], input.g-text-input__control, input');
                 if (input) break;
             }
         }
 
         if (!input) {
-            console.warn('Не найден input для', labelText);
+            console.warn('[ST Helper] Не найден input для', labelText);
             return false;
         }
 
-        forceSetReactValue(input, value);
-        await sleep(700);
+        input.focus();
+        input.click();
 
-        // Кликаем по подсказке
-        const suggestions = document.querySelectorAll(
-            '.g-label__content, .ToolsSuggest-ChosenContent, [class*="Suggest"] div'
+        const nativeSetter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set;
+        nativeSetter.call(input, '');
+        input.dispatchEvent(new Event('input', { bubbles: true }));
+        await sleep(200);
+
+        // Ввод посимвольно
+        for (const char of value) {
+            nativeSetter.call(input, input.value + char);
+            input.dispatchEvent(new InputEvent('input', {
+                bubbles: true,
+                data: char,
+                inputType: 'insertText'
+            }));
+            await sleep(40);
+        }
+
+        input.dispatchEvent(new Event('change', { bubbles: true }));
+        await sleep(800);
+
+        // Ищем подсказку по всей странице
+        const candidates = document.querySelectorAll(
+            '.g-label__content, .ToolsSuggest-ChosenContent, [class*="popup"] div, [class*="Suggest"] div, [class*="Menu"] div, li, span'
         );
-        for (const s of suggestions) {
-            if (s.textContent.trim().includes(value)) {
-                s.click();
-                await sleep(300);
+
+        for (const el of candidates) {
+            const text = el.textContent.trim();
+            if (text === value || text.includes(value)) {
+                el.click();
+                console.log('[ST Helper] Выбрано:', text);
+                await sleep(400);
                 return true;
             }
         }
 
         // Для обычного текстового поля (Код дефекта)
         if (labelText === 'Код дефекта') {
-            forceSetReactValue(input, value);
+            nativeSetter.call(input, value);
+            input.dispatchEvent(new Event('input', { bubbles: true }));
+            input.dispatchEvent(new Event('change', { bubbles: true }));
             return true;
         }
 
+        console.warn('[ST Helper] Подсказка не найдена для', value);
         return false;
     }
 
     async function runTicketTransition() {
-    console.log('[ST Helper] Запуск перехода статусов (Замена QR)');
+        console.log('[ST Helper] Запуск перехода статусов (Замена QR)');
 
-    // 1. Новый (если есть)
-    await clickByText('Новый', 3000);
-    await sleep(800);
+        // 1. Новый (если есть)
+        await clickByText('Новый', 3000);
+        await sleep(800);
 
-    // 2. Передать механикам
-    const toMechanics = await clickByText('Передать механикам', 6000);
-    if (toMechanics) {
-        await sleep(1200);
+        // 2. Передать механикам
+        const toMechanics = await clickByText('Передать механикам', 6000);
+        if (toMechanics) {
+            await sleep(1500);
 
-        // В диалоге заполняем только Компоненты
+            let filled = await fillSuggest('Компоненты', 'ROBOT_BODY_SKIN');
+            if (!filled) {
+                await sleep(800);
+                filled = await fillSuggest('Компоненты', 'ROBOT_BODY_SKIN');
+            }
+
+            await sleep(600);
+            await clickByText('Продолжить');
+            await sleep(1600);
+        }
+
+        // 3. Взять в работу
+        await clickByText('Взять в работу', 6000);
+        await sleep(1000);
+
+        // 4. В проверку
+        const toReview = await clickByText('В проверку', 6000);
+        if (!toReview) {
+            console.warn('Кнопка «В проверку» не найдена');
+            return;
+        }
+        await sleep(1300);
+
         await fillSuggest('Компоненты', 'ROBOT_BODY_SKIN');
-        await sleep(500);
+        await sleep(400);
+        await fillSuggest('Способ решения', 'CHANGE');
+        await sleep(400);
 
         await clickByText('Продолжить');
-        await sleep(1500);
+        await sleep(1600);
+
+        // 5. Закрыть (нужный)
+        await clickByText('Закрыть (нужный)', 6000);
+        await sleep(1300);
+
+        // 6. Финальный диалог — Код дефекта
+        await fillSuggest('Код дефекта', '0');
+        await sleep(400);
+
+        await clickByText('Продолжить');
+        console.log('[ST Helper] Переход статусов завершён');
     }
 
-    // 3. Взять в работу
-    await clickByText('Взять в работу', 6000);
-    await sleep(1000);
+    // =====================================================
+    //  Сообщения из iframe
+    // =====================================================
 
-    // 4. В проверку
-    const toReview = await clickByText('В проверку', 6000);
-    if (!toReview) {
-        console.warn('Кнопка «В проверку» не найдена');
-        return;
-    }
-    await sleep(1300);
-
-    // В этом диалоге Способ решения уже должен быть заполнен,
-    // но на всякий случай пробуем проставить Компоненты и CHANGE
-    await fillSuggest('Компоненты', 'ROBOT_BODY_SKIN');
-    await sleep(400);
-    await fillSuggest('Способ решения', 'CHANGE');
-    await sleep(400);
-
-    await clickByText('Продолжить');
-    await sleep(1600);
-
-    // 5. Закрыть (нужный)
-    await clickByText('Закрыть (нужный)', 6000);
-    await sleep(1300);
-
-    // 6. Финальный диалог — ставим Код дефекта = 0
-    await fillSuggest('Код дефекта', '0');
-    await sleep(400);
-
-    await clickByText('Продолжить');
-    console.log('[ST Helper] Переход статусов завершён');
-}
     window.addEventListener('message', async (event) => {
         if (!event.data) return;
 
@@ -397,9 +418,9 @@
             }, 400);
         }
 
-        // Переход статусов (только от кнопки Замена QR)
+        // Переход статусов (только от Замена QR)
         if (event.data.type === 'ST_HELPER_TICKET_TRANSITION') {
-            await sleep(2000); // ждём отправки комментария
+            await sleep(2000);
             await runTicketTransition();
         }
     });
