@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ST Ticket Self-Check
 // @namespace    http://tampermonkey.net/
-// @version      1.9.2
+// @version      1.9.3
 // @description  Самопроверка + форма учёта + комментарии + переход статусов
 // @author       You
 // @match        https://st.yandex-team.ru/*
@@ -282,48 +282,56 @@
         return false;
     }
 
-    // Ввод значения
+    // Фокус и очистка
     input.focus();
     input.click();
+
     const nativeSetter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set;
     nativeSetter.call(input, '');
     input.dispatchEvent(new Event('input', { bubbles: true }));
     await sleep(300);
 
+    // Ввод целиком
     nativeSetter.call(input, value);
     input.dispatchEvent(new InputEvent('input', {
-        bubbles: true, data: value, inputType: 'insertText'
+        bubbles: true,
+        data: value,
+        inputType: 'insertText'
     }));
     input.dispatchEvent(new Event('change', { bubbles: true }));
 
-    // === Поллинг: ждём появления подсказки до 5с, опрашивая каждые 200мс ===
+    // === Поллинг: ждём появления подсказки до 5с ===
     const wanted = value.toLowerCase().replace(/\s+/g, '');
     const deadline = Date.now() + 5000;
     let picked = false;
 
     while (Date.now() < deadline) {
         const candidates = document.querySelectorAll(
-            'div, li, span, [class*="Suggest"] *, [class*="Menu"] *, [class*="popup"] *, [role="option"], [class*="suggest"] *'
+            'div, li, span, button, [role="option"]'
         );
 
+        // Выбираем самый глубокий элемент среди тех, чей текст точно равен wanted
+        let best = null;
         for (const el of candidates) {
-            // только видимые листовые элементы, не сам input
-            if (el.tagName === 'INPUT' || el.hasChildNodes()) continue;
-
-            const raw = el.textContent.trim();
-            if (!raw || raw.length === 0 || raw.length > 120) continue;
-
+            const raw = (el.textContent || '').trim();
+            if (!raw) continue;
             const norm = raw.toLowerCase().replace(/\s+/g, '');
-            if (norm === wanted || norm.includes(wanted)) {
-                el.click();
-                console.log('[ST Helper] Выбрано:', raw);
-                picked = true;
-                break;
+            if (norm === wanted) {
+                if (!best || el.compareDocumentPosition(best) &
+                    Node.DOCUMENT_POSITION_CONTAINED_BY) {
+                    best = el;   // самый вложенный
+                }
             }
         }
 
-        if (picked) break;
-        await sleep(200);   // опросили один раз — подождали — снова
+        if (best) {
+            best.click();
+            console.log('[ST Helper] Выбрано:', best.textContent.trim());
+            picked = true;
+            break;
+        }
+
+        await sleep(200);
     }
 
     if (picked) {
@@ -350,6 +358,7 @@
         return true;
     }
 
+    console.warn('[ST Helper] Подсказка не найдена для', value);
     return false;
 }
     async function runTicketTransition() {
