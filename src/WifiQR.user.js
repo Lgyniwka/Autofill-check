@@ -24,7 +24,7 @@ var QRCode;!function(){function a(a){this.mode=c.MODE_8BIT_BYTE,this.data=a,this
         QR_SIZE: 256,                 // размер QR-картинки, px
         PAUSE_SMALL: 1000,
         PAUSE_MED: 2500,
-        PAUSE_WIFI_PASS: 30000,       // пауза после нажатия "Wifi password"
+        PAUSE_WIFI_PASS: 2500,       // небольшая пауза после нажатия "Wifi password" (данных ждёт WAIT_LINES_TIMEOUT)
         PAUSE_WAIT_LOG: 1200,
         WAIT_ELEMENT_TIMEOUT: 15000,
         WAIT_LINES_TIMEOUT: 30000      // сколько ждать появления данных в логе
@@ -79,7 +79,8 @@ var QRCode;!function(){function a(a){this.mode=c.MODE_8BIT_BYTE,this.data=a,this
         let lines = [];
         while (Date.now() - start < tmo) {
             lines = getLogLines();
-            if (lines.length >= 2) break;
+            const { ssid, pass } = parseWifiFromLog(lines);
+            if (ssid && pass) break;
             await sleep(500);
         }
         return lines;
@@ -109,8 +110,8 @@ var QRCode;!function(){function a(a){this.mode=c.MODE_8BIT_BYTE,this.data=a,this
         }
         if (!ssid && lines.length >= 2) {
             const last = lines.slice(-2).map(s => s.trim());
-            if (last[0] && last[0].length >= 4) ssid = last[0];
-            if (last[1] && last[1].length >= 8) pass = last[1];
+            if (last[0] && /^y_sdc_/i.test(last[0])) ssid = last[0];
+            if (last[1] && last[1].length >= 8 && !/^y_sdc_/i.test(last[1])) pass = last[1];
         }
         return { ssid, pass };
     }
