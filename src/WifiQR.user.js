@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         WifiQR: Робот → QR-код
 // @namespace    local
-// @version      2.3
+// @version      2.4
 // @description  Читает SSID/пароль Wi-Fi робота из shell-лога лаунчера и генерирует QR-код локально на странице (офлайн), с кнопками копирования
 // @match        https://*.launcher.sdc.yandex-team.ru/*
 // @grant        GM_getValue
@@ -24,9 +24,10 @@ var QRCode;!function(){function a(a){this.mode=c.MODE_8BIT_BYTE,this.data=a,this
         QR_SIZE: 256,                 // размер QR-картинки, px
         PAUSE_SMALL: 1000,
         PAUSE_MED: 2500,
+        PAUSE_WIFI_PASS: 30000,       // пауза после нажатия "Wifi password"
         PAUSE_WAIT_LOG: 1200,
         WAIT_ELEMENT_TIMEOUT: 15000,
-        WAIT_LINES_TIMEOUT: 12000
+        WAIT_LINES_TIMEOUT: 30000      // сколько ждать появления данных в логе
     };
 
     const STORE = { SSID: 'wifiq_ssid', PASS: 'wifiq_pass' };
@@ -126,7 +127,7 @@ var QRCode;!function(){function a(a){this.mode=c.MODE_8BIT_BYTE,this.data=a,this
 
             const wifi = await waitElement('.elements__button-name, .sdc-button', 'Wifi password', CONFIG.WAIT_ELEMENT_TIMEOUT);
             if (!wifi) { console.warn('[WifiQR] "Wifi password" не найдена'); }
-            else { clickIt(wifi); console.log('[WifiQR] Нажата "Wifi password"'); await sleep(CONFIG.PAUSE_MED); }
+            else { clickIt(wifi); console.log('[WifiQR] Нажата "Wifi password"'); await sleep(CONFIG.PAUSE_WIFI_PASS); }
         }
 
         const expands = document.querySelectorAll('.elements__log-expand');
