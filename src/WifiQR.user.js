@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         WifiQR: Робот → QR-код
 // @namespace    local
-// @version      1.9
+// @version      1.10
 // @description  Читает SSID и пароль Wi-Fi робота из shell-лога лаунчера, генерирует статический QR-код в фоновой вкладке (stqr.ru) и даёт копнуть ссылку/картинку QR
 // @match        https://*.launcher.sdc.yandex-team.ru/*
 // @match        https://stqr.ru/*
@@ -391,6 +391,12 @@
     // =====================================================
     //  СТАРТ
     // =====================================================
+    if (isLauncher()) {
+        // Сброс кеша ссылки/картинки QR при каждой загрузке лаунчера,
+        // чтобы не повисали кнопки копирования от прошлой сессии.
+        GM_setValue(STORE.QR_LINK, '');
+        GM_setValue(STORE.QR_IMG, '');
+    }
     if (isLauncher() || isQr()) {
         addLaunchButton();
     }
