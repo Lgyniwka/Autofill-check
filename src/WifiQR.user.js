@@ -10,6 +10,8 @@
 // @grant        GM_addStyle
 // @grant        GM_openInTab
 // @grant        GM_xmlhttpRequest
+// @downloadURL  https://raw.githubusercontent.com/Lgyniwka/Autofill-check/main/src/WifiQR.user.js
+// @updateURL    https://raw.githubusercontent.com/Lgyniwka/Autofill-check/main/src/WifiQR.user.js
 // ==/UserScript==
 
 (function () {
