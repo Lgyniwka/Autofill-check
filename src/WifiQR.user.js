@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         WifiQR: Робот → QR-код
 // @namespace    local
-// @version      2.2
+// @version      2.3
 // @description  Читает SSID/пароль Wi-Fi робота из shell-лога лаунчера и генерирует QR-код локально на странице (офлайн), с кнопками копирования
 // @match        https://*.launcher.sdc.yandex-team.ru/*
 // @grant        GM_getValue
@@ -42,8 +42,7 @@ var QRCode;!function(){function a(a){this.mode=c.MODE_8BIT_BYTE,this.data=a,this
         + '.st-wifiqr-row button{background:#3b82f6;color:#fff;border:none;border-radius:6px;padding:8px 12px;font:600 12px/1 -apple-system,"Segoe UI",Roboto,sans-serif;cursor:pointer}'
         + '.st-wifiqr-row button:hover{background:#2f6fe0}'
         + '.st-wifiqr-row button.gray{background:#2a2a2a;border:1px solid #4d4d4d;color:#e6e6e6}'
-        + '#st-wifiqr-copied{color:#4ade80;font:600 12px/1 -apple-system,"Segoe UI",Roboto,sans-serif;opacity:0;transition:opacity .3s}'
-        + '#st-wifiqr-copied.show{opacity:1}');
+        + '#st-wifiqr-toast{position:fixed;left:50%;bottom:40px;transform:translateX(-50%);z-index:1000001;padding:10px 18px;background:#2f6fe0;color:#fff;border-radius:8px;font:600 14px/1 -apple-system,"Segoe UI",Roboto,sans-serif;box-shadow:0 6px 24px rgba(0,0,0,.4)}');
 
     function clickIt(el) {
         el.click();
@@ -177,14 +176,8 @@ var QRCode;!function(){function a(a){this.mode=c.MODE_8BIT_BYTE,this.data=a,this
         const row = document.createElement('div');
         row.className = 'st-wifiqr-row';
         const bImg = document.createElement('button');
-        bImg.textContent = 'Copy картинку';
-        const bLink = document.createElement('button');
-        bLink.className = 'gray';
-        bLink.textContent = 'Copy строку';
-        const done = document.createElement('span');
-        done.id = 'st-wifiqr-copied';
-        done.textContent = '✓ Скопировано';
-        row.append(bImg, bLink, done);
+        bImg.textContent = 'Скопировать картинку';
+        row.append(bImg);
 
         wrap.append(close, title, box, row);
         document.body.appendChild(wrap);
@@ -203,32 +196,32 @@ var QRCode;!function(){function a(a){this.mode=c.MODE_8BIT_BYTE,this.data=a,this
             return;
         }
 
-        let copiedTimer;
-        function notifyCopied() {
-            done.classList.add('show');
-            clearTimeout(copiedTimer);
-            copiedTimer = setTimeout(() => done.classList.remove('show'), 1600);
+        function showToast(text) {
+            const t = document.createElement('div');
+            t.id = 'st-wifiqr-toast';
+            t.textContent = text;
+            Object.assign(t.style, {
+                position: 'fixed', left: '50%', bottom: '40px', transform: 'translateX(-50%)', zIndex: '1000001',
+                padding: '10px 18px', background: '#2f6fe0', color: '#fff', borderRadius: '8px',
+                font: '600 14px/1 -apple-system,"Segoe UI",Roboto,sans-serif', boxShadow: '0 6px 24px rgba(0,0,0,.4)'
+            });
+            document.body.appendChild(t);
+            setTimeout(() => t.remove(), 2200);
         }
 
-        // Копирование картинки QR: canvas -> PNG
+        // Копирование картинки QR: canvas -> PNG, закрыть окно, тост
         bImg.onclick = async () => {
             try {
                 const canvas = box.querySelector('canvas');
                 const dataUrl = canvas.toDataURL('image/png');
                 const blob = await (await fetch(dataUrl)).blob();
                 await navigator.clipboard.write([new ClipboardItem({ 'image/png': blob })]);
-                notifyCopied();
             } catch (e) {
                 console.error('[WifiQR] копирование картинки не удалось:', e);
                 await navigator.clipboard.writeText(payload).catch(() => {});
-                notifyCopied();
             }
-        };
-
-        // Копирование самой строки (WIFI:-payload)
-        bLink.onclick = async () => {
-            await navigator.clipboard.writeText(payload).catch(e => console.error(e));
-            notifyCopied();
+            wrap.remove();
+            showToast('QR-код скопирован в буфер обмена');
         };
     }
 
