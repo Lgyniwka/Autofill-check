@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         WifiQR: Робот → QR-код
 // @namespace    local
-// @version      1.8
+// @version      1.9
 // @description  Читает SSID и пароль Wi-Fi робота из shell-лога лаунчера, генерирует статический QR-код в фоновой вкладке (stqr.ru) и даёт копнуть ссылку/картинку QR
 // @match        https://*.launcher.sdc.yandex-team.ru/*
 // @match        https://stqr.ru/*
@@ -19,6 +19,7 @@
         TEST_MODE: false,            // false = боевой режим (переход на stqr, авто-клик)
         AUTO_SUBMIT: true,           // true = автоматически жать "Создать статический QR-код"
         BACKGROUND_TAB: true,        // true = открывать stqr в фоновой вкладке (без переключения фокуса)
+        CLOSE_BG_TAB: true,          // true = автоматически закрыть фоновую вкладку после захвата QR
         QR_URL: 'https://stqr.ru/generator/wifi',
         SECTYPE: 'WPA2',
         // таймауты / паузы (мс)
@@ -261,6 +262,11 @@
             console.log('[WifiQR] stqr: QR захвачен.');
             console.log('[WifiQR]   ссылка:', link);
             console.log('[WifiQR]   картинка:', imgSrc);
+            // Автозакрытие фоновой вкладки (данные уже в GM — на лаунчере доступны кнопки копирования)
+            if (CONFIG.CLOSE_BG_TAB) {
+                console.log('[WifiQR] stqr: закрываю фоновую вкладку через 1.2 c');
+                setTimeout(() => { try { window.close(); } catch (e) { console.warn('[WifiQR] stqr: не удалось закрыть вкладку:', e); } }, 1200);
+            }
         }, CONFIG.QR_WATCH_MS);
     }
 
