@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Accounting Form AutoFill
 // @namespace    https://github.com/Lgyniwka/Autofill-check
-// @version      1.6
+// @version      1.7
 // @description  Плавающая панель + отправка комментария + переход статусов только для Замена QR
 // @author       You
 // @match        https://tools.sdc.yandex-team.ru/accounting-fleet-works*
@@ -14,14 +14,20 @@
     'use strict';
 
     const STORAGE_KEY = 'accounting-panel-position';
+    const COLLAPSE_KEY = 'accounting-panel-collapsed';
 
     const panel = document.createElement('div');
     panel.id = 'accounting-actions-panel';
     panel.innerHTML = `
-        <div class="acp-header">Действия</div>
-        <button class="acp-btn" data-action="stickers">Замена QR</button>
-        <button class="acp-btn" data-action="ppr">ППР робота</button>
-        <button class="acp-btn" data-action="microphone">Установка жгута микрофонов</button>
+        <div class="acp-header">
+            <span>Действия</span>
+            <button class="acp-toggle" title="Свернуть">▾</button>
+        </div>
+        <div class="acp-body">
+            <button class="acp-btn" data-action="stickers">Замена QR</button>
+            <button class="acp-btn" data-action="ppr">ППР робота</button>
+            <button class="acp-btn" data-action="microphone">Установка жгута микрофонов</button>
+        </div>
     `;
 
     const style = document.createElement('style');
@@ -33,7 +39,12 @@
             font-size: 13px; box-shadow: 0 4px 20px rgba(0,0,0,0.35);
             min-width: 210px; user-select: none; cursor: move;
         }
-        #accounting-actions-panel .acp-header { font-weight: 600; margin-bottom: 8px; opacity: 0.9; cursor: move; }
+        #accounting-actions-panel .acp-header { font-weight: 600; margin-bottom: 8px; opacity: 0.9; cursor: move; display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+        #accounting-actions-panel .acp-toggle { background: none; border: none; color: #aaa; cursor: pointer; font-size: 14px; padding: 2px 6px; border-radius: 4px; line-height: 1; }
+        #accounting-actions-panel .acp-toggle:hover { color: #fff; background: #333; }
+        #accounting-actions-panel.collapsed .acp-body { display: none; }
+        #accounting-actions-panel.collapsed { padding-bottom: 6px; }
+        #accounting-actions-panel.collapsed .acp-header { margin-bottom: 0; }
         #accounting-actions-panel .acp-btn {
             display: block; width: 100%; margin: 4px 0; padding: 7px 10px;
             border: none; border-radius: 6px; background: #3b82f6; color: white;
@@ -58,7 +69,7 @@
 
     let isDragging = false, offsetX, offsetY;
     panel.addEventListener('mousedown', e => {
-        if (e.target.classList.contains('acp-btn')) return;
+        if (e.target.closest('.acp-btn, .acp-toggle')) return;
         isDragging = true;
         offsetX = e.clientX - panel.getBoundingClientRect().left;
         offsetY = e.clientY - panel.getBoundingClientRect().top;
@@ -76,6 +87,23 @@
         panel.style.cursor = 'move';
         const rect = panel.getBoundingClientRect();
         localStorage.setItem(STORAGE_KEY, JSON.stringify({ left: rect.left, top: rect.top }));
+    });
+
+    function applyCollapse(collapsed) {
+        panel.classList.toggle('collapsed', collapsed);
+        const toggle = panel.querySelector('.acp-toggle');
+        toggle.textContent = collapsed ? '▸' : '▾';
+        toggle.title = collapsed ? 'Развернуть' : 'Свернуть';
+        if (collapsed) panel.style.width = panel.getBoundingClientRect().width + 'px';
+        else panel.style.width = '';
+    }
+
+    if (localStorage.getItem(COLLAPSE_KEY) === '1') applyCollapse(true);
+    panel.querySelector('.acp-toggle').addEventListener('click', e => {
+        e.stopPropagation();
+        const collapsed = !panel.classList.contains('collapsed');
+        applyCollapse(collapsed);
+        localStorage.setItem(COLLAPSE_KEY, collapsed ? '1' : '0');
     });
 
     function forceSetValue(input, value) {

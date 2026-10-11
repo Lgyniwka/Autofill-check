@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ST Ticket Self-Check
 // @namespace    http://tampermonkey.net/
-// @version      4.5
+// @version      4.6
 // @description  Самопроверка + форма учёта + комментарии. Переходы/поля/резолюция — через API Stracker
 // @author       You
 // @match        https://st.yandex-team.ru/*
@@ -203,14 +203,19 @@
     const panel = document.createElement('div');
     panel.id = 'st-self-check';
     panel.innerHTML = `
-        <div class="sch-header">Самопроверка</div>
-        <div class="sch-item" id="sch-components"><span class="sch-dot"></span><span class="sch-text">Компоненты: ROBOT / LOGS</span></div>
-        <div class="sch-item" id="sch-comment"><span class="sch-dot"></span><span class="sch-text">Комментарий от исполнителя</span></div>
-        <div class="sch-item" id="sch-sdcwh"><span class="sch-dot"></span><span class="sch-text">Тикет запчастей (SDCWH)</span></div>
-        <div class="sch-divider"></div>
-        <div class="sch-form">
-            <input id="sch-rover-input" type="text" placeholder="Rover ID" />
-            <button id="sch-insert-btn">Вставить форму учёта</button>
+        <div class="sch-header">
+            <span>Самопроверка</span>
+            <button class="sch-toggle" title="Свернуть">▾</button>
+        </div>
+        <div class="sch-body">
+            <div class="sch-item" id="sch-components"><span class="sch-dot"></span><span class="sch-text">Компоненты: ROBOT / LOGS</span></div>
+            <div class="sch-item" id="sch-comment"><span class="sch-dot"></span><span class="sch-text">Комментарий от исполнителя</span></div>
+            <div class="sch-item" id="sch-sdcwh"><span class="sch-dot"></span><span class="sch-text">Тикет запчастей (SDCWH)</span></div>
+            <div class="sch-divider"></div>
+            <div class="sch-form">
+                <input id="sch-rover-input" type="text" placeholder="Rover ID" />
+                <button id="sch-insert-btn">Вставить форму учёта</button>
+            </div>
         </div>
     `;
 
@@ -218,7 +223,12 @@
     const style = document.createElement('style');
     style.textContent = `
         #st-self-check { position: fixed; top: 80px; right: 20px; z-index: 99999; background: #1f1f1f; color: #eee; border-radius: 10px; padding: 10px 14px; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; font-size: 13px; box-shadow: 0 4px 20px rgba(0,0,0,0.35); min-width: 240px; user-select: none; cursor: move; }
-        #st-self-check .sch-header { font-weight: 600; margin-bottom: 8px; font-size: 14px; opacity: 0.9; }
+        #st-self-check .sch-header { font-weight: 600; margin-bottom: 8px; font-size: 14px; opacity: 0.9; display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+        #st-self-check .sch-toggle { background: none; border: none; color: #aaa; cursor: pointer; font-size: 14px; padding: 2px 6px; border-radius: 4px; line-height: 1; }
+        #st-self-check .sch-toggle:hover { color: #fff; background: #333; }
+        #st-self-check.collapsed .sch-body { display: none; }
+        #st-self-check.collapsed { padding-bottom: 6px; }
+        #st-self-check.collapsed .sch-header { margin-bottom: 0; }
         #st-self-check .sch-item { display: flex; align-items: center; gap: 8px; margin: 6px 0; }
         #st-self-check .sch-dot { width: 12px; height: 12px; border-radius: 50%; background: #666; flex-shrink: 0; }
         #st-self-check .sch-dot.ok { background: #22c55e; }
@@ -237,7 +247,7 @@
 
     let isDragging = false, offsetX, offsetY;
     panel.addEventListener('mousedown', e => {
-        if (e.target.closest('.sch-item, .sch-form')) return;
+        if (e.target.closest('.sch-item, .sch-form, .sch-toggle')) return;
         isDragging = true;
         offsetX = e.clientX - panel.getBoundingClientRect().left;
         offsetY = e.clientY - panel.getBoundingClientRect().top;
@@ -252,6 +262,25 @@
     document.addEventListener('mouseup', () => {
         isDragging = false;
         panel.style.cursor = 'move';
+    });
+
+
+    // Сворачивание панели (запоминаем состояние)
+    const SCH_COLLAPSE_KEY = 'st-self-check-collapsed';
+    function applySchCollapse(collapsed) {
+        panel.classList.toggle('collapsed', collapsed);
+        const toggle = panel.querySelector('.sch-toggle');
+        toggle.textContent = collapsed ? '▸' : '▾';
+        toggle.title = collapsed ? 'Развернуть' : 'Свернуть';
+        if (collapsed) panel.style.width = panel.getBoundingClientRect().width + 'px';
+        else panel.style.width = '';
+    }
+    if (localStorage.getItem(SCH_COLLAPSE_KEY) === '1') applySchCollapse(true);
+    panel.querySelector('.sch-toggle').addEventListener('click', e => {
+        e.stopPropagation();
+        const collapsed = !panel.classList.contains('collapsed');
+        applySchCollapse(collapsed);
+        localStorage.setItem(SCH_COLLAPSE_KEY, collapsed ? '1' : '0');
     });
 
 
