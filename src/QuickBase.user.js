@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         QuickBase: Панель базы знаний (все сайты)
 // @namespace    https://github.com/Lgyniwka/Autofill-check/blob/main/src/QuickBase.user.js
-// @version      0.2.2
+// @version      0.2.3
 // @description  Горячая клавиша Cmd+Ё (macOS) / Ctrl+~ (Windows) — открывает панель со справочниками и ссылками на любой странице браузера. Схема данных — в DATA ниже.
 // @homepageURL  https://github.com/Lgyniwka/Autofill-check/blob/main/src/QuickBase.user.js
 // @supportURL   https://github.com/Lgyniwka/Autofill-check/blob/main/src/QuickBase.user.js
@@ -86,10 +86,14 @@
     let panel = null;
 
     function matchesHotkey(e) {
-        // Cmd+Ё (macOS) / Ctrl+~ (Windows) — физическая клавиша ~ (Backquote)
+        // macOS: Cmd+Shift+Ё — Cmd+Ё перехватывается системой (переключение окон).
+        // Запасной вариант везде: Ctrl+Ё (Windows: Ctrl+~), системой не занимается.
         const isMac = navigator.platform.toUpperCase().indexOf('MAC') >= 0;
-        const mod = isMac ? e.metaKey : e.ctrlKey;
-        return mod && e.code === 'Backquote' && !e.altKey && !e.shiftKey;
+        if (isMac && e.metaKey && e.shiftKey && e.code === 'Backquote' && !e.altKey && !e.ctrlKey) return true;
+        if (!isMac && e.ctrlKey && e.code === 'Backquote' && !e.altKey && !e.shiftKey && !e.metaKey) return true;
+        // Ctrl+Ё работает и на macOS как запасной
+        if (e.ctrlKey && e.code === 'Backquote' && !e.altKey && !e.shiftKey && !e.metaKey) return true;
+        return false;
     }
 
     function onKeydown(e) {
@@ -297,7 +301,7 @@
             <div class="qb_box">
                 <div class="qb_head">
                     <span class="qb_title">⚡ QuickBase — база знаний</span>
-                    <span class="qb_kbd">${isMacOS() ? 'Cmd+Ё / Esc' : 'Ctrl+~ / Esc'}</span>
+                    <span class="qb_kbd">${isMacOS() ? 'Cmd+Shift+Ё · Ctrl+Ё / Esc' : 'Ctrl+~ / Esc'}</span>
                 </div>
                 <input id="qb_search" type="text" placeholder="Поиск по разделам и работам…" autocomplete="off">
                 <div id="qb_sections">${sectionsHTML}</div>
