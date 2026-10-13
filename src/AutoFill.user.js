@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Accounting Form AutoFill
 // @namespace    https://github.com/Lgyniwka/Autofill-check
-// @version      2.19
+// @version      2.20
 // @description  Плавающая панель + отправка комментария + переход статусов только для Замена QR
 // @author       You
 // @match        https://tools.sdc.yandex-team.ru/accounting-fleet-works*
@@ -195,7 +195,9 @@
             // Жгут АКБ + КОНнектор: жгут меняется ТОЛЬКО ОДИН — Battery Harness ×1
             batteryCon: {
                 seriesQuery: 'robot_electric_wiring', seriesChip: 'ROBOT_ELECTRIC_WIRING',
-                wikiText: '3.9 Battery Harness', qty: '1'
+                wikiText: '3.9 Battery Harness', qty: '1',
+                // + вторая позиция по кнопке «Ещё»: два переходника
+                extraRow: { wikiText: '3.9 Переходник для АКБ 1.5 Battery extender', qty: '2' }
             }
         };
 
