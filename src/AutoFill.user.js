@@ -147,7 +147,63 @@
         }, '*');
     }
 
-    function doAction(btn, searchText, matchText, commentText, action) {
+    // =====================================================
+    //  Локации заказа запчастей SDCWH (id из spare_parts_form)
+    // =====================================================
+    const SPARE_PART_LOCATIONS = {
+        'Рободоставка Арма': '1258532',
+        'Рободоставка Шарапово': '1258533',
+        'Рободоставка Мытищи': '1258534',
+        'Рободоставка Мурино': '1258535',
+        'Рободоставка Иннополис': '1258536',
+        'ТП Роко-лаб СПБ-1': '1258537',
+        'СПБ ЮГ | ТП КР Транспорт СПБ-1': '1258538',
+        'Казань | ТП Аргамак КЗН-1': '1258539',
+        'Нижний Новгород | ТП Аргамак НН-1': '1258540',
+        'МСК Север | ТП Север ИП Лупета МСК-1': '1258541',
+        'МСК Юг | ТП ЮГ (Люберцы) Континент МСК-1': '1258542',
+        'ТП Некст МСК-1': '1258543',
+        'МСК Запад | ТП Запад Роботехнологии МСК-1': '1258544',
+        'Воронеж | ТП МК Авто ( Воронеж)': '1258545',
+        'Тюмень': '1258671'
+    };
+
+    function showLocationModal(onPick) {
+        const overlay = document.createElement('div');
+        overlay.id = 'acp-location-modal';
+        const list = Object.keys(SPARE_PART_LOCATIONS)
+            .map(name => `<button class="acp-loc-btn" data-loc="${name}">${name}</button>`)
+            .join('');
+        overlay.innerHTML = `
+            <div class="acp-loc-box">
+                <div class="acp-loc-head"><span>Выбери локацию для заказа запчастей</span><button class="acp-loc-close">✕</button></div>
+                <div class="acp-loc-list">${list}</div>
+            </div>
+        `;
+        const style = document.createElement('style');
+        style.textContent = `
+            #acp-location-modal { position: fixed; inset: 0; z-index: 999999; background: rgba(0,0,0,0.55); display: flex; align-items: center; justify-content: center; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }
+            #acp-location-modal .acp-loc-box { background: #1f1f1f; color: #eee; border-radius: 12px; padding: 16px 18px; width: 360px; max-width: 92%; max-height: 80vh; display: flex; flex-direction: column; box-shadow: 0 8px 30px rgba(0,0,0,0.5); }
+            #acp-location-modal .acp-loc-head { font-size: 14px; font-weight: 600; margin-bottom: 12px; display: flex; align-items: center; justify-content: space-between; }
+            #acp-location-modal .acp-loc-close { background: none; border: none; color: #aaa; cursor: pointer; font-size: 16px; line-height: 1; }
+            #acp-location-modal .acp-loc-close:hover { color: #fff; }
+            #acp-location-modal .acp-loc-list { overflow: auto; display: flex; flex-direction: column; gap: 4px; }
+            #acp-location-modal .acp-loc-btn { border: none; border-radius: 6px; padding: 8px 10px; background: #2a2a2a; color: #eee; font-size: 13px; text-align: left; cursor: pointer; }
+            #acp-location-modal .acp-loc-btn:hover { background: #3b82f6; }
+        `;
+        document.head.appendChild(style);
+        document.body.appendChild(overlay);
+        overlay.querySelector('.acp-loc-close').addEventListener('click', () => overlay.remove());
+        overlay.addEventListener('click', e => {
+            const btn = e.target.closest('.acp-loc-btn');
+            if (!btn) return;
+            const name = btn.dataset.loc;
+            overlay.remove();
+            onPick(name, SPARE_PART_LOCATIONS[name]);
+        });
+    }
+
+    function doAction(btn, searchText, matchText, commentText, action, onSaved) {
         const input = document.querySelector('input[placeholder="Добавить работы"]');
         if (!input) return alert('Поле не найдено');
 
@@ -172,6 +228,9 @@
                             setTimeout(() => {
                                 // Всегда отправляем комментарий
                                 sendCommentToParent(commentText);
+
+                                // Колбэк после сохранения (напр. команда заказа запчастей)
+                                if (typeof onSaved === 'function') onSaved(saved);
 
                                 // Переход статусов — ТОЛЬКО для Замена QR
                                 if (action === 'stickers') {
@@ -217,7 +276,18 @@
             doAction(btn, 'ППР', 'ППР робота', 'Сделали ППР', action);
         }
         if (action === 'microphone') {
-            doAction(btn, 'жгута микрофонов', 'Установка жгута микрофонов', 'Установили жгут микрофонов', action);
+            // Сначала выбор локации заказа запчастей
+            showLocationModal((locationName, locationId) => {
+                doAction(btn, 'жгута микрофонов', 'Установка жгута микрофонов', 'Установили жгут микрофонов', action, () => {
+                    window.parent.postMessage({
+                        type: 'ST_HELPER_MICROPHONE_ORDER',
+                        payload: {
+                            locationName,
+                            locationId
+                        }
+                    }, '*');
+                });
+            });
         }
     });
 })();

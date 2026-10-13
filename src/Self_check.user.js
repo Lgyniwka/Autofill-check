@@ -9,6 +9,7 @@
 // @grant        GM_getValue
 // @grant        GM_setValue
 // @connect      st-api.yandex-team.ru
+// @connect      forms-api.yandex-team.ru
 // @downloadURL  https://raw.githubusercontent.com/Lgyniwka/Autofill-check/main/src/Self_check.user.js
 // @updateURL    https://raw.githubusercontent.com/Lgyniwka/Autofill-check/main/src/Self_check.user.js
 // ==/UserScript==
@@ -113,19 +114,89 @@
 
 
     // =====================================================
+    //  API Яндекс.Форм (заказ запчастей SDCWH)
+    // =====================================================
+    const FORMS_API_BASE = 'https://forms-api.yandex-team.ru/v3';
+    const FORMS_SUGGEST = 'https://forms-api.yandex-team.ru/form/getSuggest';
+
+    // Форма заказа запчастей 13693051 — обязательные поля (стр.1) и ряд «Вики+Количество» для жгута микрофона
+    const SPARE_FORM = {
+        formId: 13693051,
+        wikiSerie: '1143780',                              // Серия ROBOT_ELECTRIC_WIRING
+        qty: '1',
+        wikiText: '3.9 Жгут MIC Service branch',           // Позиция Вики
+        fields: {
+            location: 'answer_wiki_9008987764243672',      // Локация (suggest)
+            robotStatus: 'answer_one_answer_9008988226731508', // Статус (radio)
+            isSC: 'answer_one_answer_9008988226019256',    // Это СК? (radio)
+            materialType: 'answer_choices_1908101',        // Тип ТМЦ (radio)
+            productSeries: 'answer_wiki_9008976633551088', // Серия (suggest)
+            wikiQuestion: 'id-question-55449060',          // Вики (suggest, ряд жгута)
+            qtyQuestion: 'id-question-55449058'            // Количество (ряд жгута)
+        },
+        enumValues: {
+            notDonor: '1788972002689',
+            no: '1788971284642',
+            parts: '3179563'
+        }
+    };
+
+    function formsApi(request) {
+        return new Promise((resolve, reject) => {
+            GM_xmlhttpRequest({
+                method: request.method, url: request.url,
+                headers: Object.assign({ 'Authorization': 'OAuth ' + OAUTH_TOKEN, 'Content-Type': 'application/json' }, request.headers || {}),
+                data: request.body ? JSON.stringify(request.body) : undefined,
+                onload: (r) => {
+                    let json = null;
+                    try { json = JSON.parse(r.responseText); } catch (e) {}
+                    if (r.status >= 200 && r.status < 300) resolve({ status: r.status, data: json, text: r.responseText });
+                    else reject({ status: r.status, data: json, text: r.responseText });
+                },
+                onerror: (e) => reject({ status: 'net', text: String(e) })
+            });
+        });
+    }
+
+    // Поиск id Suggest-позиции по тексту (поле Вики в ряду серии)
+    async function formsSuggest(question, text) {
+        const r = await formsApi({
+            method: 'POST',
+            url: FORMS_SUGGEST,
+            body: { question, text, parents: null, surveyId: SPARE_FORM.formId }
+        });
+        const arr = Array.isArray(r.data) ? r.data : (r.data && r.data.items) || [];
+        return arr.find(x => x && x.id && x.text) || arr[0] || null;
+    }
+
+    // Отправка ответа формы заказа запчастей (создаёт тикет SDCWH)
+    async function submitSparePartsForm(fieldsMap) {
+        const r = await formsApi({
+            method: 'POST',
+            url: `${FORMS_API_BASE}/surveys/${SPARE_FORM.formId}/form`,
+            body: fieldsMap
+        });
+        return r.data || {};
+    }
+
+
+    // =====================================================
     //  Поля через API
     // =====================================================
-    const COMPONENT_IDS = { 'ROBOT_BODY_SKIN': 162077 };
-    const COMPONENT_VALUE = 'ROBOT_BODY_SKIN';
+    const COMPONENT_IDS = {
+        'ROBOT_BODY_SKIN': 162077,
+        'ROBOT_ELECTRIC_WIRING': 162067
+    };
     const THE_DEFECT_CODE_FIELD = '60df26695151a36df681d67b--theDefectCode'; // Код дефекта
 
 
-    async function setComponentApi(issueKey) {
-        const id = COMPONENT_IDS[COMPONENT_VALUE];
-        if (!id) { console.warn('[ST] Нет id для', COMPONENT_VALUE); return false; }
+    async function setComponentApi(issueKey, component) {
+        const value = component || 'ROBOT_BODY_SKIN';
+        const id = COMPONENT_IDS[value];
+        if (!id) { console.warn('[ST] Нет id для', value); return false; }
         try {
             await apiRequest('PATCH', `https://st-api.yandex-team.ru/v3/issues/${issueKey}`, { components: id });
-            console.log('[ST] Компонент установлен:', COMPONENT_VALUE, '=', id);
+            console.log('[ST] Компонент установлен:', value, '=', id);
             return true;
         } catch (e) {
             console.warn('[ST] PATCH компонента не прошёл:', e.status, String(e.text || '').slice(0, 300));
@@ -134,10 +205,10 @@
     }
 
 
-    async function setSolutionViaApi(issueKey) {
+    async function setSolutionViaApi(issueKey, method = 'CHANGE') {
         try {
-            await apiRequest('PATCH', `https://st-api.yandex-team.ru/v3/issues/${issueKey}`, { solutionMethod: 'CHANGE' });
-            console.log('[ST] Способ решения установлен: CHANGE');
+            await apiRequest('PATCH', `https://st-api.yandex-team.ru/v3/issues/${issueKey}`, { solutionMethod: method });
+            console.log('[ST] Способ решения установлен:', method);
             return true;
         } catch (e) {
             console.warn('[ST] PATCH solutionMethod не прошёл:', e.status, String(e.text || '').slice(0, 300));
@@ -153,6 +224,20 @@
             return true;
         } catch (e) {
             console.warn('[ST] PATCH кода дефекта не прошёл:', e.status, String(e.text || '').slice(0, 300));
+            return false;
+        }
+    }
+
+
+    // Итоговый комментарий через API (с подписью Платона)
+    async function sendPostComment(issueKey, text) {
+        const body = text + '\n\n---\nПлатон🧑🏽‍✈️';
+        try {
+            await apiRequest('POST', `https://st-api.yandex-team.ru/v3/issues/${issueKey}/comments`, { text: body });
+            console.log('[ST] Итоговый комментарий отправлен:', text);
+            return true;
+        } catch (e) {
+            console.warn('[ST] Комментарий не отправлен:', e.status, String(e.text || '').slice(0, 300));
             return false;
         }
     }
@@ -500,6 +585,100 @@
 
 
     // =====================================================
+    //  Заказ запчастей жгута микрофона (SDCWH через Forms API)
+    // =====================================================
+    async function runMicrophoneOrder(locationName, locationId, issueKey) {
+        if (!OAUTH_TOKEN) { showTokenModal(); return; }
+        if (!issueKey) { console.warn('[ST] Тикет не определён для заказа жгута'); showToast('Не определён тикет'); return; }
+
+        try {
+            // 0. Локация — либо по id из AutoFill, либо по тексту
+            let locId = locationId;
+            if (!locId) {
+                const loc = await formsSuggest(SPARE_FORM.fields.location, locationName);
+                locId = loc ? loc.id : null;
+            }
+            if (!locId) { showToast('Локация не найдена: ' + locationName); return; }
+
+            // 1. Серия компонент — по префиксу
+            const serie = await formsSuggest(SPARE_FORM.fields.productSeries, 'robot_electric_wiring');
+            if (!serie || !serie.id) { showToast('Серия ROBOT_ELECTRIC_WIRING не найдена'); return; }
+
+            // 2. Позиция Вики
+            const wiki = await formsSuggest(SPARE_FORM.fields.wikiQuestion, SPARE_FORM.wikiText);
+            if (!wiki || !wiki.id) { showToast('Позиция Вики не найдена: ' + SPARE_FORM.wikiText); return; }
+
+            // 3. Submit формы (создаёт тикет SDCWH)
+            const fieldsMap = {
+                [SPARE_FORM.fields.location]: locId,
+                [SPARE_FORM.fields.robotStatus]: SPARE_FORM.enumValues.notDonor,
+                [SPARE_FORM.fields.isSC]: SPARE_FORM.enumValues.no,
+                [SPARE_FORM.fields.materialType]: SPARE_FORM.enumValues.parts,
+                [SPARE_FORM.fields.productSeries]: serie.id,
+                [SPARE_FORM.fields.wikiQuestion]: wiki.id,
+                [SPARE_FORM.fields.qtyQuestion]: SPARE_FORM.qty,
+                issue_key: issueKey,
+                model_objeckt: 'robot_r3'
+            };
+            console.log('[ST] Submit заказа запчастей жгута микрофона', JSON.stringify(fieldsMap));
+            const res = await submitSparePartsForm(fieldsMap);
+            console.log('[ST] Ответ форм:', JSON.stringify(res));
+            showToast('Заказ запчастей создан (SDCWH)', 4000);
+
+            // 4. Полный переход статусов до «Закрыт» (пресет жгута микрофона)
+            await sleep(1500);
+            await runTicketTransitionFor(issueKey, {
+                component: 'ROBOT_ELECTRIC_WIRING',
+                solutionMethod: 'CHANGE',
+                commentText: 'Установили жгут микрофона'
+            });
+        } catch (e) {
+            console.warn('[ST] Ошибка заказа запчастей:', e.status, String(e.text || '').slice(0, 500));
+            showToast('Не удалось создать заказ запчастей: ' + String(e.status || 'err'), 7000);
+        }
+    }
+
+    // =====================================================
+    //  Обобщённый полный переход статусов до «Закрыт» (через API)
+    //  preset: { component, solutionMethod, commentText }
+    // =====================================================
+    async function runTicketTransitionFor(issueKey, preset, startedAt) {
+        startedAt = startedAt || Date.now();
+        const comp = (preset && preset.component) || 'ROBOT_BODY_SKIN';
+        const method = (preset && preset.solutionMethod) || 'CHANGE';
+        const commentText = (preset && preset.commentText) || 'Работа выполнена';
+        console.log('[ST Helper] Переход статусов — через API (компонент ' + comp + ')');
+        if (!issueKey) { console.warn('[ST] Тикет не определён'); return; }
+        if (!OAUTH_TOKEN) { showTokenModal(); return; }
+
+        // 0. Если не в «Новом» — переводим туда
+        await runTransitionByDisplay(issueKey, 'Новый', 1500);
+
+        // 1. Компонент
+        await setComponentApi(issueKey, comp);
+
+        // 2. Обработан (Передать механикам)
+        await runTransitionByDisplay(issueKey, 'Передать механикам');
+        // 3. В работе
+        await runTransitionByDisplay(issueKey, 'Взять в работу');
+        // 4. Способ решения
+        await setSolutionViaApi(issueKey, method);
+        // 5. Проверка
+        await runTransitionByDisplay(issueKey, 'В проверку');
+        // 6. Код дефекта
+        await setDefectCodeApi(issueKey, '0');
+        // 7. Закрыт (резолюция в теле перехода)
+        await runTransitionByDisplay(issueKey, 'Закрыть (нужный)', 10000, { resolution: 'fixed' });
+        // 8. Итоговый комментарий
+        await sendPostComment(issueKey, commentText);
+
+        const elapsedSec = ((Date.now() - startedAt) / 1000).toFixed(1);
+        console.log('[ST Helper] Переход статусов завершён за ' + elapsedSec + ' сек');
+        showToast('Жгут микрофона: готово за ' + elapsedSec + ' сек', 7000);
+    }
+
+
+    // =====================================================
     //  Полный переход статусов — через API (Замена QR)
     // =====================================================
     async function runTicketTransition(startedAt) {
@@ -509,21 +688,18 @@
         if (!issueKey) { console.warn('[ST] Тикет не определён'); return; }
         if (!OAUTH_TOKEN) { showTokenModal(); return; }
 
-
         // 0. Если не в «Новом» — переводим туда (если уже в Новом, перехода нет, идём дальше)
         await runTransitionByDisplay(issueKey, 'Новый', 1500);
 
-
         // 1. Компонент
-        await setComponentApi(issueKey);
-
+        await setComponentApi(issueKey, 'ROBOT_BODY_SKIN');
 
         // 2. Обработан (Передать механикам)
         await runTransitionByDisplay(issueKey, 'Передать механикам');
         // 3. В работе
         await runTransitionByDisplay(issueKey, 'Взять в работу');
         // 4. Способ решения
-        await setSolutionViaApi(issueKey);
+        await setSolutionViaApi(issueKey, 'CHANGE');
         // 5. Проверка
         await runTransitionByDisplay(issueKey, 'В проверку');
         // 6. Код дефекта
@@ -565,6 +741,12 @@
             const startedAt = Date.now();
             await sleep(2000);
             await runTicketTransition(startedAt);
+        }
+
+        if (event.data.type === 'ST_HELPER_MICROPHONE_ORDER') {
+            await sleep(1000);
+            const p = (event.data.payload || {});
+            await runMicrophoneOrder(p.locationName, p.locationId, getTicketKey());
         }
     });
 
