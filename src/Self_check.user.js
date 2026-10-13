@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ST Ticket Self-Check
 // @namespace    http://tampermonkey.net/
-// @version      5.16
+// @version      5.17
 // @description  Самопроверка + форма учёта + комментарии. Переходы/поля/резолюция — через API Stracker
 // @author       You
 // @match        https://st.yandex-team.ru/*
@@ -848,8 +848,11 @@
         await runTransition(calibKey, ['validation', 'Проверка']);
         await sleep(300);
 
-        // 5. Закрыть БЕЗ резолюции и кода дефекта — W32458 проставит «Решен» и исполнителя
-        let okClose = await runTransition(calibKey, 'Закрыть', 10000);
+        // 5. Закрыть. Переход в этой очереди называется «Закрыт» (не «Закрыть»)
+        // и ОБЯЗАН получить резолюцию (422 без неё). Код дефекта не ставим;
+        // исполнителя проставит автоматизация SDCFLEETOPS Calibration (W32458).
+        let okClose = await runTransition(calibKey, ['Закрыть', 'Закрыт'], 10000, { resolution: 'fixed' });
+        if (!okClose) okClose = await runTransition(calibKey, ['closed', 'closedMeta'], 10000, { resolution: 'fixed' });
         if (!okClose) okClose = await runTransition(calibKey, ['closed', 'closedMeta'], 10000);
         showToast('Калибровки закрыты: ' + calibKey + (okClose ? '' : ' (переход не прошёл — проверь вручную)'), 7000);
     }
