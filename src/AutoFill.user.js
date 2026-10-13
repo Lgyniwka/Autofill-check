@@ -6,6 +6,7 @@
 // @author       You
 // @match        https://tools.sdc.yandex-team.ru/accounting-fleet-works*
 // @match        https://forms.yandex-team.ru/surveys/154795*
+// @match        https://forms.yandex-team.ru/surveys/13693051*
 // @grant        none
 // @downloadURL  https://raw.githubusercontent.com/Lgyniwka/Autofill-check/main/src/AutoFill.user.js
 // @updateURL    https://raw.githubusercontent.com/Lgyniwka/Autofill-check/main/src/AutoFill.user.js
@@ -15,11 +16,13 @@
     'use strict';
 
     // =====================================================
-    //  Заказ запчастей (форма 154795). Обрабатываем СРАЗУ и выходим,
-    //  чтобы не выполнять панель и localStorage (в sandbox-iframe это упало бы).
+    //  Заказ запчастей (форма. Фронт в трекере отдаёт iframe по 154795,
+    //  но внутри он редиректит на каноническую 13693051. Поэтому матчим обе.
+    //  Обрабатываем СРАЗУ и выходим, чтобы не выполнять панель и localStorage
+    //  (в sandbox-iframe это упало бы).
     // =====================================================
-    if (/\/surveys\/154795/.test(location.href)) {
-        console.log('[AF] Режим формы заказа запчастей (154795) — ждём сообщение от родителя');
+    if (/\/surveys\/(154795|13693051)/.test(location.href)) {
+        console.log('[AF] Режим формы заказа запчастей — ждём сообщение от родителя');
 
         function waitFor(sel, timeout = 8000) {
             return new Promise(resolve => {
@@ -195,8 +198,8 @@
             }
         });
 
-        // Сценарий «новое окно»: Self_check открывает форму в отдельной вкладке
-        // и передаёт локацию через GET-параметр st_location (надёжно, без гонок postMessage).
+        // Сценарий «новое окно»: Self_check открывает src-ссылку iframe в отдельной вкладке
+        // и передаёт локацию через GET-параметр st_location.
         const urlLoc = new URL(location.href).searchParams.get('st_location');
         if (urlLoc) {
             console.log('[AF] Запуск из открытого окна, локация =', urlLoc);
