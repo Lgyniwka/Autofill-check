@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Accounting Form AutoFill
 // @namespace    https://github.com/Lgyniwka/Autofill-check
-// @version      2.3
+// @version      2.4
 // @description  Плавающая панель + отправка комментария + переход статусов только для Замена QR
 // @author       You
 // @match        https://tools.sdc.yandex-team.ru/accounting-fleet-works*
@@ -84,30 +84,91 @@
             });
         }
 
+        async function pickOptionIn(container, labelContains) {
+            const t0 = Date.now();
+            return new Promise(resolve => {
+                const iv = setInterval(() => {
+                    const opts = [...(container || document).querySelectorAll('label[class*="Option"], [role="option"], .g-radio-group__option')];
+                    const target = opts.find(o => (o.textContent || '').toLowerCase().includes(String(labelContains).toLowerCase()));
+                    if (target) { clearInterval(iv); target.click(); resolve(true); }
+                    else if (Date.now() - t0 > 6000) { clearInterval(iv); resolve(false); }
+                }, 300);
+            });
+        }
+        // Найти suggest-инпут по тексту вопроса (label), чтобы не спутать с полем локации.
+        function findInputByQuestionLabel(textPart, timeout = 8000) {
+            return new Promise(resolve => {
+                const scan = () => {
+                    for (const q of document.querySelectorAll('.Question')) {
+                        const lbl = q.querySelector('.QuestionLabel, h3, .QuestionLayout-Label');
+                        if (lbl && (lbl.textContent || '').toLowerCase().includes(String(textPart).toLowerCase())) {
+                            const input = q.querySelector('input[role="combobox"], input[aria-label*="Для поиска"], input.g-text-input__control');
+                            if (input) return input;
+                        }
+                    }
+                    return null;
+                };
+                const el = scan();
+                if (el) return resolve(el);
+                const t0 = Date.now();
+                const iv = setInterval(() => {
+                    const e = scan();
+                    if (e) { clearInterval(iv); resolve(e); }
+                    else if (Date.now() - t0 > timeout) { clearInterval(iv); resolve(null); }
+                }, 300);
+            });
+        }
+        async function setQuantityToOne() {
+            const t0 = Date.now();
+            return new Promise(resolve => {
+                const iv = setInterval(() => {
+                    const q = [...document.querySelectorAll('input[type="number"], input[inputmode="numeric"], input.g-text-input__control')]
+                        .find(el => el.closest('.Question') && /количеств/i.test(el.closest('.Question').textContent));
+                    if (q) {
+                        clearInterval(iv);
+                        setValue(q, '1');
+                        resolve(true);
+                    }
+                    else if (Date.now() - t0 > 6000) { clearInterval(iv); resolve(false); }
+                }, 300);
+            });
+        }
+
         async function runSpareOrderForm(locationName) {
             console.log('[AF] Заполняю форму заказа, локация =', locationName);
             try {
-                // 1. Локация (suggest)
+                // Стр.1: Локация + Статус робота + СК + Тип ТМЦ, кнопка «Далее»
                 const locInput = await waitFor('#answer_wiki_9008987764243672', 12000);
                 if (!locInput) { console.warn('[AF] Поле локации не найдено'); return; }
                 const locPicked = await pickSuggest(locInput, locationName);
                 console.log('[AF] Локация:', locPicked);
-                await new Promise(r => setTimeout(r, 400));
-
-                // 2. Статус робота -> «Не донор» (если невыбрано)
-                await pickOption('Не донор');
-                await new Promise(r => setTimeout(r, 300));
-
-                // 3. Это СК? -> «Нет»
-                await pickOption('Нет');
-                await new Promise(r => setTimeout(r, 300));
-
-                // 4. Тип ТМЦ -> «Запчасти»
-                await pickOption('Запчасти');
                 await new Promise(r => setTimeout(r, 500));
 
-                // 5. Отправить
-                const send = await waitForText('Отправить', 6000);
+                await pickOption('Не донор');   // Статус робота
+                await new Promise(r => setTimeout(r, 300));
+                await pickOption('Нет');        // Это СК?
+                await new Promise(r => setTimeout(r, 300));
+                await pickOption('Запчасти');   // Тип ТМЦ
+                await new Promise(r => setTimeout(r, 400));
+
+                // Далее: если кнопка есть — жмём (переход на стр.2 с Вики).
+                const nextBtn = await waitForText('Далее', 4000);
+                if (nextBtn) { clickEl(nextBtn); console.log('[AF] Нажали «Далее»'); await new Promise(r => setTimeout(r, 800)); }
+                else { console.log('[AF] Кнопки «Далее» нет — форма одностраничная'); }
+
+                // Стр.2: Вики (suggest «Жгут MIC Service branch») + Количество (=1).
+                const wikiInput = await findInputByQuestionLabel('Вики', 8000);
+                if (wikiInput) {
+                    const picked = await pickSuggest(wikiInput, 'Жгут MIC Service branch');
+                    console.log('[AF] Вики выбрана:', picked);
+                } else {
+                    console.warn('[AF] Поле «Вики» не найдено');
+                }
+                await new Promise(r => setTimeout(r, 400));
+                await setQuantityToOne();
+
+                await new Promise(r => setTimeout(r, 400));
+                const send = await waitForText('Отправить', 8000);
                 if (send) { clickEl(send); console.log('[AF] Нажали «Отправить»'); }
                 else { console.warn('[AF] Кнопка «Отправить» не найдена'); }
             } catch (e) {
