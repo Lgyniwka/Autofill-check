@@ -1,8 +1,9 @@
 // ==UserScript==
 // @name         QuickBase: Панель базы знаний (все сайты)
-// @namespace    local
-// @version      0.2.0
+// @namespace    https://github.com/Lgyniwka/Autofill-check
+// @version      0.2.1
 // @description  Горячая клавиша Cmd+Ё (macOS) / Ctrl+~ (Windows) — открывает панель со справочниками и ссылками на любой странице браузера. Схема данных — в DATA ниже.
+// @homepageURL  https://github.com/Lgyniwka/Autofill-check
 // @match        *://*/*
 // @run-at       document-end
 // @grant        GM_setClipboard
