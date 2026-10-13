@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ST Ticket Self-Check
 // @namespace    http://tampermonkey.net/
-// @version      4.9
+// @version      5.0
 // @description  Самопроверка + форма учёта + комментарии. Переходы/поля/резолюция — через API Stracker
 // @author       You
 // @match        https://st.yandex-team.ru/*
@@ -532,23 +532,6 @@
     document.getElementById('sch-insert-btn').addEventListener('click', insertAccountingForm);
 
 
-    // =====================================================
-    //  Явный скан iframe формы учёта — снять lazy-загрузку,
-    //  чтобы скрипт формы (AutoFill) гарантированно впрыснулся
-    // =====================================================
-    function forceAccountingIframeEager() {
-        document.querySelectorAll('iframe[src*="accounting-fleet-works"]').forEach(iframe => {
-            iframe.setAttribute('loading', 'eager');
-            iframe.removeAttribute('loading');
-            console.log('[ST] iframe формы учёта: снял lazy-загрузку');
-        });
-    }
-    forceAccountingIframeEager();
-    new MutationObserver(function () {
-        forceAccountingIframeEager();
-    }).observe(document.body, { childList: true, subtree: true });
-
-
     runCheck();
     setInterval(runCheck, 2000);
     new MutationObserver(runCheck).observe(document.body, { childList: true, subtree: true });
@@ -592,10 +575,20 @@
         if (!issueKey) { console.warn('[ST] Тикет не определён для заказа жгута'); showToast('Не определён тикет'); return; }
 
         try {
-            // 0. «Обработан» (Передать механикам) — через API. Только после этого
-            //    на родителе появляется кнопка «Заказать запчасти».
-            console.log('[ST] Жгут микрофона: перевожу в «Обработан»');
-            await runTransitionByDisplay(issueKey, 'Передать механикам', 8000);
+            // 0. «Обработан» — по скиллу: компонент + дедлайн, затем переход.
+            //    Только после этого на родителе появляется кнопка «Заказать запчасти».
+            console.log('[ST] Жгут микрофона: Обработан (компонент+дедлайн)');
+            try {
+                const today = new Date().toISOString().slice(0, 10);
+                await apiRequest('PATCH', `https://st-api.yandex-team.ru/v3/issues/${issueKey}`, {
+                    components: COMPONENT_IDS['ROBOT_ELECTRIC_WIRING'],
+                    deadline: today
+                });
+            } catch (e) {
+                console.warn('[ST] PATCH компонента/дедлайна не прошёл:', e.status, String(e.text || '').slice(0, 300));
+            }
+            const okTreated = await runTransitionByDisplay(issueKey, 'Передать механикам', 8000);
+            console.log('[ST] Переход «Передать механикам»: ' + (okTreated ? 'выполнен' : 'не найден'));
             await sleep(1500);
 
             // 0.1 Кнопка «Заказать запчасти» вставляет форму 13693051 в комментарий тикета

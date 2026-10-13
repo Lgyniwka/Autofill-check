@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Accounting Form AutoFill
 // @namespace    https://github.com/Lgyniwka/Autofill-check
-// @version      2.0
+// @version      2.1
 // @description  Плавающая панель + отправка комментария + переход статусов только для Замена QR
 // @author       You
 // @match        https://tools.sdc.yandex-team.ru/accounting-fleet-works*
@@ -71,15 +71,23 @@
         ensurePanelInDom();
     }).observe(document.documentElement, { childList: true, subtree: true });
 
-    // Позиция: панель появляется по центру видимой области (iframe)
-    function centerPanel() {
+    // Позиция: центрируем ТОЛЬКО при первой установке (нет сохранённой позиции).
+    // После перетаскивания позиция сохраняется и больше не сбрасывается.
+    let savedPos = null;
+    try {
+        savedPos = JSON.parse(localStorage.getItem(STORAGE_KEY));
+    } catch (e) {}
+    if (savedPos && savedPos.left != null) {
+        panel.style.left = savedPos.left + 'px';
+        panel.style.top = savedPos.top + 'px';
+        panel.style.right = 'auto';
+    } else {
         const w = panel.offsetWidth;
         const h = panel.offsetHeight;
         panel.style.left = Math.max(0, Math.round((window.innerWidth - w) / 2)) + 'px';
         panel.style.top = Math.max(0, Math.round((window.innerHeight - h) / 2)) + 'px';
         panel.style.right = 'auto';
     }
-    centerPanel();
 
     let isDragging = false, offsetX, offsetY;
     panel.addEventListener('mousedown', e => {
