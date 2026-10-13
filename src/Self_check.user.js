@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ST Ticket Self-Check
 // @namespace    http://tampermonkey.net/
-// @version      5.4
+// @version      5.5
 // @description  Самопроверка + форма учёта + комментарии. Переходы/поля/резолюция — через API Stracker
 // @author       You
 // @match        https://st.yandex-team.ru/*
@@ -578,7 +578,9 @@
     //  и отправляем форму напрямую через Forms API из родителя.
     // =====================================================
 
-    // Ждём iframe формы и вытаскиваем из его src surveyId + prefill (answer_* параметры).
+    // Ждём iframe формы и вытаскиваем из его src surveyId + ВСЕ параметры prefill.
+    // Важно: кроме answer_* там есть скрытые поля привязки к тикету (issue_key, rover,
+    // model_objeckt, event_Id и т.п.) — без них форма не создаст тикет SDCWH.
     async function getOrderIframeData(timeoutMs = 30000) {
         const start = Date.now();
         while (Date.now() - start < timeoutMs) {
@@ -589,7 +591,10 @@
                     const m = u.pathname.match(/\/surveys\/(\d+)/);
                     if (m) {
                         const prefill = {};
-                        u.searchParams.forEach((v, k) => { if (/^answer_/.test(k)) prefill[k] = v; });
+                        u.searchParams.forEach((v, k) => {
+                            if (k === 'iframe') return; // служебный, не поле формы
+                            prefill[k] = v;
+                        });
                         return { surveyId: m[1], prefill };
                     }
                 } catch (e) { console.warn('[ST] Не распарсил src iframe:', e); }
