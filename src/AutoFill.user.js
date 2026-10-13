@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Accounting Form AutoFill
 // @namespace    https://github.com/Lgyniwka/Autofill-check
-// @version      2.18
+// @version      2.17
 // @description  Плавающая панель + отправка комментария + переход статусов только для Замена QR
 // @author       You
 // @match        https://tools.sdc.yandex-team.ru/accounting-fleet-works*
@@ -198,17 +198,6 @@
                     if (q) {
                         clearInterval(iv);
                         setValue(q, value);
-                        // execCommand мог не примениться на number-инпуте — дожимаем
-                        // нативным setter-ом и проверяем, что значение реально встало.
-                        if (String(q.value) !== String(value)) {
-                            try {
-                                const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set;
-                                setter.call(q, String(value));
-                                q.dispatchEvent(new Event('input', { bubbles: true }));
-                                q.dispatchEvent(new Event('change', { bubbles: true }));
-                            } catch (e) {}
-                        }
-                        console.log('[AF] Количество =', q.value);
                         resolve(true);
                     }
                     else if (Date.now() - t0 > 6000) { clearInterval(iv); resolve(false); }
@@ -274,9 +263,30 @@
                 await new Promise(r => setTimeout(r, 400));
                 await setQuantity(preset.qty);
 
-                // Пресет « Замена коннекторов АКБ »: количество (2) указывается
-                // в единственном поле «Количество». Кнопку «Ещё» НЕ жмём никогда
-                // (блок второго ряда удалён 13.10.2026 по решению пользователя).
+                // Вторая позиция ряда (пресет «+ КОН»): кнопка «Ещё» → новый ряд
+                // (id полей дублируются — берём ПОСЛЕДНИЕ Вики и Количество).
+                if (preset.extraRow) {
+                    await new Promise(r => setTimeout(r, 500));
+                    const moreBtn = await waitForText('Ещё', 5000);
+                    if (moreBtn) {
+                        clickEl(moreBtn);
+                        console.log('[AF] Нажали «Ещё» — добавлен второй ряд');
+                        await new Promise(r => setTimeout(r, 1000));
+                        const wiki2 = await findInputByQuestionLabel('Вики', 8000, true);
+                        if (wiki2) {
+                            const p2 = await pickSuggest(wiki2, preset.extraRow.wikiText);
+                            console.log('[AF] Вторая Вики:', p2, preset.extraRow.wikiText);
+                        } else { console.warn('[AF] Второе поле «Вики» не найдено'); }
+                        await new Promise(r => setTimeout(r, 400));
+                        await setQuantity(preset.extraRow.qty, true);
+                        // После второй позиции — «Далее» (если есть), затем «Отправить».
+                        await new Promise(r => setTimeout(r, 500));
+                        const next2 = await waitForText('Далее', 3000);
+                        if (next2) { clickEl(next2); console.log('[AF] Нажали «Далее»'); await new Promise(r => setTimeout(r, 1000)); }
+                    } else {
+                        console.warn('[AF] Кнопка «Ещё» не найдена — остаёмся с одной позицией');
+                    }
+                }
 
                 await new Promise(r => setTimeout(r, 400));
                 const send = await waitForText('Отправить', 8000);
