@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         QuickBase: Панель базы знаний (все сайты)
 // @namespace    https://github.com/Lgyniwka/Autofill-check/blob/main/src/QuickBase.user.js
-// @version      0.6.0
-// @description  Панель базы знаний живёт рядом с сайтом: нет затемнения, клики по сайту проходят мимо и панель не закрывается — удобно копировать логин/пароль не закрывая базу. Перетаскивается, позиция запоминается. Кнопка-ровер — полупрозрачная, тащится мышью, ПКМ — скрыть.
+// @version      0.7.0
+// @description  Панель базы знаний живёт рядом с сайтом (без затемнения, не закрывается кликом по странице). Любая строка с доп. данными (логин/пароль/details) — сворачиваемая, с копированием внутри. Кнопка-ровер — полупрозрачная, тащится, ПКМ — скрыть.
 // @homepageURL  https://github.com/Lgyniwka/Autofill-check/blob/main/src/QuickBase.user.js
 // @supportURL   https://github.com/Lgyniwka/Autofill-check/blob/main/src/QuickBase.user.js
 // @updateURL    https://raw.githubusercontent.com/Lgyniwka/Autofill-check/main/src/QuickBase.user.js
@@ -368,17 +368,13 @@
                 return;
             }
 
-            if (item.details) {
+            // Любая строка с доп. данными — разворачивается
+            if (item.details || item.value) {
                 toggleDetails(row);
                 return;
             }
             if (item.link) {
                 GM_openInTab(item.link, { active: true });
-                return;
-            }
-            if (item.value) {
-                GM_setClipboard(item.value);
-                flash(row, '✅ Скопировано');
             }
         });
 
@@ -397,12 +393,18 @@
         const sectionsHTML = DATA.map((section) => {
             const rows = section.items.map((item) => {
                 const dataAttr = encode(item);
-                const expandIco = item.details ? '<span class="qb_expand">▸</span>' : '';
+                // Разворачиваемая — любая строка с доп. данными (details и/или value), а не только с details
+                const hasExtra = !!(item.details || item.value);
+                // Блок доп. данных: из details, либо из одиночного value
+                const extraRows = item.details
+                    ? item.details
+                    : [{ label: 'Значение', value: item.value }];
+                const expandIco = hasExtra ? '<span class="qb_expand">▸</span>' : '';
                 const linkIco = item.link ? '<span class="qb_ico" data-qb-link title="Открыть ссылку">↗</span>' : '';
                 const copyIco = item.value ? '<span class="qb_ico" data-qb-copy title="Скопировать">⧉</span>' : '';
-                const detailsHTML = item.details
+                const detailsHTML = hasExtra
                     ? `<div class="qb_details" style="display:none">${
-                          item.details.map((d) =>
+                          extraRows.map((d) =>
                               `<div class="qb_details_row" data-qb-detail="${encode(d)}">
                                    <span class="qb_details_label">${d.label}</span>
                                    <span class="qb_details_value">${d.value}</span>
@@ -411,7 +413,7 @@
                       }</div>`
                     : '';
                 return `
-                    <div class="qb_row" data-qb-row data-qb-item="${dataAttr}" ${item.details ? 'data-qb-has-details' : ''}>
+                    <div class="qb_row" data-qb-row data-qb-item="${dataAttr}" ${hasExtra ? 'data-qb-has-details' : ''}>
                         ${expandIco}
                         <span class="qb_label">${item.label}</span>
                         ${item.hint ? `<span class="qb_hint">${item.hint}</span>` : ''}
