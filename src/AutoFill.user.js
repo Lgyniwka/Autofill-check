@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Accounting Form AutoFill
 // @namespace    https://github.com/Lgyniwka/Autofill-check
-// @version      1.8
+// @version      1.9
 // @description  Плавающая панель + отправка комментария + переход статусов только для Замена QR
 // @author       You
 // @match        https://tools.sdc.yandex-team.ru/accounting-fleet-works*
@@ -33,7 +33,7 @@
     const style = document.createElement('style');
     style.textContent = `
         #accounting-actions-panel {
-            position: fixed; top: 20px; right: 20px; z-index: 99999;
+            position: fixed; margin: 0; z-index: 99999;
             background: #1f1f1f; color: #eee; border-radius: 10px;
             padding: 10px; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
             font-size: 13px; box-shadow: 0 4px 20px rgba(0,0,0,0.35);
@@ -71,15 +71,15 @@
         ensurePanelInDom();
     }).observe(document.documentElement, { childList: true, subtree: true });
 
-    // Позиция
-    try {
-        const saved = JSON.parse(localStorage.getItem(STORAGE_KEY));
-        if (saved?.left != null) {
-            panel.style.left = saved.left + 'px';
-            panel.style.top = saved.top + 'px';
-            panel.style.right = 'auto';
-        }
-    } catch (e) {}
+    // Позиция: панель появляется по центру видимой области (iframe)
+    function centerPanel() {
+        const w = panel.offsetWidth;
+        const h = panel.offsetHeight;
+        panel.style.left = Math.max(0, Math.round((window.innerWidth - w) / 2)) + 'px';
+        panel.style.top = Math.max(0, Math.round((window.innerHeight - h) / 2)) + 'px';
+        panel.style.right = 'auto';
+    }
+    centerPanel();
 
     let isDragging = false, offsetX, offsetY;
     panel.addEventListener('mousedown', e => {
