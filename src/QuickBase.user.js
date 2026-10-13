@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         QuickBase: Панель базы знаний (все сайты)
 // @namespace    https://github.com/Lgyniwka/Autofill-check/blob/main/src/QuickBase.user.js
-// @version      0.3.0
+// @version      0.3.1
 // @description  Плавающая кнопка-ровер (правый нижний угол) открывает панель базы знаний на любом сайте. Запасной вход: Cmd+Shift+Ё/Ctrl+~. Схема данных — в DATA ниже.
 // @homepageURL  https://github.com/Lgyniwka/Autofill-check/blob/main/src/QuickBase.user.js
 // @supportURL   https://github.com/Lgyniwka/Autofill-check/blob/main/src/QuickBase.user.js
@@ -122,7 +122,7 @@
      *  ПКМ по кнопке — скрыть на этой вкладке до перезагрузки.
      * ================================================================== */
 
-    const QB_ICON_URL = ''; // например: 'https://.../rover.png'
+    const QB_ICON_URL = 'https://avatars.mds.yandex.net/i?id=9e3268fc66a050716037551f084418f9_l-7716430-images-thumbs&n=13';
 
     const QB_SVG = `
         <svg viewBox="0 0 64 64" width="30" height="30" aria-hidden="true">
@@ -153,7 +153,7 @@
         btn.title = 'QuickBase — база знаний (клик — открыть, ПКМ — скрыть)';
 
         btn.innerHTML = QB_ICON_URL
-            ? `<img src="${QB_ICON_URL}" alt="rover" width="30" height="30">`
+            ? `<img src="${QB_ICON_URL}" alt="rover" width="34" height="34">`
             : QB_SVG;
 
         btn.addEventListener('click', (e) => {
@@ -199,6 +199,10 @@
                 -webkit-user-select: none;
             }
             #quickbase_btn { pointer-events: auto; }
+            #quickbase_btn img {
+                border-radius: 8px;
+                object-fit: cover;
+            }
         `;
         document.documentElement.appendChild(style);
         document.documentElement.appendChild(btn);
