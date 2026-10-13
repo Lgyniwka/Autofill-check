@@ -1,12 +1,13 @@
 // ==UserScript==
 // @name         Accounting Form AutoFill
 // @namespace    https://github.com/Lgyniwka/Autofill-check
-// @version      2.6
+// @version      2.7
 // @description  Плавающая панель + отправка комментария + переход статусов только для Замена QR
 // @author       You
 // @match        https://tools.sdc.yandex-team.ru/accounting-fleet-works*
 // @match        https://forms.yandex-team.ru/surveys/154795*
 // @match        https://forms.yandex-team.ru/surveys/13693051*
+// @match        https://forms.yandex-team.ru/ext/surveys/13693051*
 // @grant        none
 // @downloadURL  https://raw.githubusercontent.com/Lgyniwka/Autofill-check/main/src/AutoFill.user.js
 // @updateURL    https://raw.githubusercontent.com/Lgyniwka/Autofill-check/main/src/AutoFill.user.js
