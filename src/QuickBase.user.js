@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         QuickBase: Панель базы знаний (все сайты)
 // @namespace    https://github.com/Lgyniwka/Autofill-check/blob/main/src/QuickBase.user.js
-// @version      0.7.0
-// @description  Панель базы знаний живёт рядом с сайтом (без затемнения, не закрывается кликом по странице). Любая строка с доп. данными (логин/пароль/details) — сворачиваемая, с копированием внутри. Кнопка-ровер — полупрозрачная, тащится, ПКМ — скрыть.
+// @version      0.8.0
+// @description  Панель базы знаний живёт рядом с сайтом. Сворачиваемые: заголовки секций (Инструкции/Информация/Ссылки — состояние запоминается) и все строки с доп. данными (логин/пароль/details с копированием). Кнопка-ровер — полупрозрачная, тащится, ПКМ — скрыть.
 // @homepageURL  https://github.com/Lgyniwka/Autofill-check/blob/main/src/QuickBase.user.js
 // @supportURL   https://github.com/Lgyniwka/Autofill-check/blob/main/src/QuickBase.user.js
 // @updateURL    https://raw.githubusercontent.com/Lgyniwka/Autofill-check/main/src/QuickBase.user.js
@@ -378,6 +378,34 @@
             }
         });
 
+        // Клик по заголовку секции — свернуть/развернуть (запоминается)
+        const COLLAPSED_KEY = 'qb_collapsed_sections';
+        const loadCollapsed = () => {
+            try { return new Set(JSON.parse(localStorage.getItem(COLLAPSED_KEY)) || []); }
+            catch (e) { return new Set(); }
+        };
+        const saveCollapsed = (set) => {
+            try { localStorage.setItem(COLLAPSED_KEY, JSON.stringify([...set])); } catch (err) { /* ignore */ }
+        };
+        panel.querySelectorAll('[data-qb-section]').forEach((sec) => {
+            const title = sec.querySelector('[data-qb-section-toggle]');
+            const body = sec.querySelector('.qb_section_body');
+            const name = sec.dataset.qbTitle;
+            const collapsed = loadCollapsed();
+            if (collapsed.has(name)) {
+                body.style.display = 'none';
+                title.querySelector('.qb_expand').textContent = '▸';
+            }
+            title.addEventListener('click', () => {
+                const isCollapsed = body.style.display === 'none';
+                body.style.display = isCollapsed ? '' : 'none';
+                title.querySelector('.qb_expand').textContent = isCollapsed ? '▾' : '▸';
+                const set = loadCollapsed();
+                if (isCollapsed) set.delete(name); else set.add(name);
+                saveCollapsed(set);
+            });
+        });
+
         input.focus();
     }
 
@@ -424,9 +452,12 @@
                     ${detailsHTML}`;
             }).join('');
             return `
-                <div class="qb_section" data-qb-section>
-                    <div class="qb_section_title">${section.title}</div>
-                    ${rows}
+                <div class="qb_section" data-qb-section data-qb-title="${section.title}">
+                    <div class="qb_section_title" data-qb-section-toggle>
+                        <span class="qb_expand">▾</span>
+                        <span>${section.title}</span>
+                    </div>
+                    <div class="qb_section_body">${rows}</div>
                 </div>`;
         }).join('');
 
@@ -479,10 +510,13 @@
                 #${PANEL_ID} .qb_section { margin-top: 8px; }
                 #${PANEL_ID} .qb_empty { color: #7b8395; padding: 14px 4px; font-size: 12px; text-align: center; }
                 #${PANEL_ID} .qb_section_title {
+                    display: flex; align-items: center; gap: 4px;
                     font-size: 10px; font-weight: 700; color: #9aa3b8;
                     text-transform: uppercase; letter-spacing: .4px;
                     margin: 8px 2px 4px;
+                    cursor: pointer; user-select: none; -webkit-user-select: none;
                 }
+                #${PANEL_ID} .qb_section_title:hover { color: #e6e9f0; }
                 #${PANEL_ID} .qb_row {
                     display: flex; flex-wrap: wrap; align-items: center; gap: 6px;
                     padding: 5px 8px; border-radius: 7px;
@@ -550,6 +584,10 @@
 
     function applyFilter(q) {
         q = q.trim().toLowerCase();
+        const loadCollapsed = () => {
+            try { return new Set(JSON.parse(localStorage.getItem('qb_collapsed_sections')) || []); }
+            catch (e) { return new Set(); }
+        };
         const sections = panel.querySelectorAll('[data-qb-section]');
         let total = 0;
         sections.forEach((sec) => {
@@ -570,6 +608,17 @@
                 if (show) visibleInSection++;
             });
             sec.style.display = visibleInSection ? '' : 'none';
+            // При поиске — раскрыть свёрнутые секции с попаданиями; при пустом запросе — вернуть состояние
+            const body = sec.querySelector('.qb_section_body');
+            const arrow = sec.querySelector('[data-qb-section-toggle] .qb_expand');
+            if (q && visibleInSection) {
+                body.style.display = '';
+                if (arrow) arrow.textContent = '▾';
+            } else if (!q) {
+                const isCollapsed = loadCollapsed().has(sec.dataset.qbTitle);
+                body.style.display = isCollapsed ? 'none' : '';
+                if (arrow) arrow.textContent = isCollapsed ? '▸' : '▾';
+            }
             total += visibleInSection;
         });
         panel.querySelector('#qb_empty').style.display = total ? 'none' : '';
