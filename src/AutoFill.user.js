@@ -1,13 +1,15 @@
 // ==UserScript==
 // @name         Accounting Form AutoFill
 // @namespace    https://github.com/Lgyniwka/Autofill-check
-// @version      2.21
-// @description  Плавающая панель + отправка комментария + переход статусов только для Замена QR
+// @version      2.22
+// @description  Плавающая панель + отправка комментария + переход статусов. Пресеты: QR, ППР (форма осмотра), жгут микрофонов, АКБ
 // @author       You
 // @match        https://tools.sdc.yandex-team.ru/accounting-fleet-works*
 // @match        https://forms.yandex-team.ru/surveys/154795*
 // @match        https://forms.yandex-team.ru/surveys/13693051*
 // @match        https://forms.yandex-team.ru/ext/surveys/13693051*
+// @match        https://forms.yandex-team.ru/surveys/13691922*
+// @match        https://forms.yandex-team.ru/ext/surveys/13691922*
 // @grant        none
 // @downloadURL  https://raw.githubusercontent.com/Lgyniwka/Autofill-check/main/src/AutoFill.user.js
 // @updateURL    https://raw.githubusercontent.com/Lgyniwka/Autofill-check/main/src/AutoFill.user.js
@@ -15,6 +17,378 @@
 
 (function () {
     'use strict';
+
+    // =====================================================
+    //  Форма осмотра ППР (13691922) — перенос логики standalone
+    //  PPR Fast Fill. Self_check открывает форму в новом окне с
+    //  GET-параметрами r (робот), p (порт), e (исполнитель),
+    //  k (ключ тикета). Фото — по рукопожатию postMessage
+    //  (AF_PPR_READY -> ST_PPR_DATA). После «Отправить» шлём
+    //  AF_PPR_DONE и закрываем окно.
+    // =====================================================
+    if (/\/surveys\/13691922/.test(location.href)) {
+        console.log('[AF-PPR] Режим формы осмотра ППР');
+        const sleep = (ms) => new Promise(r => setTimeout(r, ms));
+
+        const FIELDS = {
+            robot: 'answer_choices_992399',
+            port: 'answer_choices_992376',
+            executor: 'answer_choices_990084',
+            date: 'answer_date_990086',
+            photo: 'answer_files_990097'
+        };
+        const CLEAN = {
+            answer_choices_997442: '1557619',
+            answer_choices_995784: '1555246',
+            answer_choices_1020989: '1598535',
+            answer_choices_990241: '1546256',
+            answer_choices_990265: '1546261',
+            answer_choices_990290: '1546298',
+            answer_choices_990312: '1546319',
+            answer_choices_990387: '1546443',
+            answer_choices_991172: '1548311',
+            answer_choices_991377: '1548526',
+            answer_choices_991401: '1548614',
+            answer_choices_991429: '1548646',
+            answer_choices_991433: '1548648',
+            answer_choices_991452: '1548665',
+            answer_choices_991460: '1548669',
+            answer_choices_991550: '1548787',
+            answer_choices_991567: '1548848',
+            answer_choices_991351: '1548455',
+            answer_choices_991363: '1548469'
+        };
+        const KEY_FIELD = 'answer_short_text_992404';
+        const ERROR_TEXT = 'Не удалось загрузить данные.';
+        const SUGGEST_URL = '/form/getSuggest';
+        const GLOBAL_COOLDOWN = 6000;
+        const RETRY_SLOT_MS = 40000;
+
+        // ---------- Саджест-движок (408-коундоуны, стабильные опции) ----------
+        const netByField = {};
+        const activeField = { id: null };
+        let globalPauseUntil = 0;
+        const justTimedOut = (fieldId, ms = 4000) => Date.now() - (netByField[fieldId] || 0) < ms;
+        const committed = {};
+
+        function markCommitted(fieldId) { committed[fieldId] = true; }
+
+        try {
+            const xo = XMLHttpRequest.prototype.open;
+            XMLHttpRequest.prototype.open = function (m, u) {
+                this.__suggest__ = typeof u === 'string' && u.indexOf(SUGGEST_URL) !== -1;
+                return xo.apply(this, arguments);
+            };
+            const xs = XMLHttpRequest.prototype.send;
+            XMLHttpRequest.prototype.send = function () {
+                if (this.__suggest__) this.addEventListener('loadend', () => {
+                    if (this.status === 408) {
+                        if (activeField.id && !isGood(activeField.id)) {
+                            netByField[activeField.id] = Date.now();
+                            globalPauseUntil = Date.now() + GLOBAL_COOLDOWN;
+                        }
+                    }
+                });
+                return xs.apply(this, arguments);
+            };
+        } catch (e) {}
+
+        function clickBtn(el) {
+            ['pointerdown', 'mousedown', 'mouseup', 'click'].forEach(t =>
+                el.dispatchEvent(new MouseEvent(t, { bubbles: true, cancelable: true })));
+        }
+        function checkRadio(name, value) {
+            const input = document.querySelector('input[type=radio][name="' + name + '"][value="' + value + '"]');
+            if (!input) return false;
+            const label = input.closest('label');
+            if (label) clickBtn(label); else input.click();
+            return true;
+        }
+        function setText(name, value) {
+            const el = document.querySelector('input[name="' + name + '"], textarea[name="' + name + '"]');
+            if (!el) return false;
+            const proto = el.tagName === 'TEXTAREA' ? window.HTMLTextAreaElement.prototype : window.HTMLInputElement.prototype;
+            const setter = Object.getOwnPropertyDescriptor(proto, 'value').set;
+            setter.call(el, value);
+            el.dispatchEvent(new Event('input', { bubbles: true }));
+            el.dispatchEvent(new Event('change', { bubbles: true }));
+            return true;
+        }
+        function readOptions(input) {
+            const popupId = input.getAttribute('aria-controls');
+            const popup = popupId ? document.getElementById(popupId) : null;
+            return popup ? Array.from(popup.querySelectorAll('[role="option"]')) : [];
+        }
+        function fieldHasError(input) {
+            const box = (input.closest('.g-question, [class*="question"], [data-testid*="quest"], [class*="SuggestQuestion"]')) || input.parentElement || input;
+            return box && box.textContent.includes(ERROR_TEXT);
+        }
+        function closeDropdown(input) { input.blur(); input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true })); }
+        function triggerSearch(input, text) {
+            const setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value').set;
+            setter.call(input, ''); input.dispatchEvent(new Event('input', { bubbles: true }));
+            return new Promise(r => setTimeout(() => {
+                if (input.value === '') { setter.call(input, text); input.dispatchEvent(new Event('input', { bubbles: true })); }
+                r();
+            }, 120));
+        }
+        async function respectCooldown() {
+            while (Date.now() < globalPauseUntil) {
+                if (activeField.id && isGood(activeField.id)) { globalPauseUntil = 0; break; }
+                await sleep(500);
+            }
+        }
+        async function waitOptions(input, fieldId, timeoutMs = 2500) {
+            const start = Date.now(); let lastSig = '', stableSince = 0;
+            while (Date.now() - start < (justTimedOut(fieldId) ? 4000 : timeoutMs)) {
+                await respectCooldown();
+                if (justTimedOut(fieldId)) continue;
+                if (fieldHasError(input)) { await sleep(400); continue; }
+                const opts = readOptions(input); const sig = opts.map(o => o.textContent.trim()).join('|');
+                if (opts.length && sig === lastSig) {
+                    if (!stableSince) stableSince = Date.now();
+                    else if (Date.now() - stableSince >= 500) return { ok: true, options: opts };
+                } else { lastSig = sig; stableSince = 0; }
+                await sleep(250);
+            }
+            return { ok: false, options: [] };
+        }
+        function pickFrom(options, query) {
+            const q2 = query.trim().toLowerCase(); const norm = o => o.textContent.trim().toLowerCase();
+            const exact = options.find(o => norm(o) === q2); if (exact) return exact;
+            const starts = options.find(o => norm(o).startsWith(q2)); if (starts) return starts;
+            const contains = options.filter(o => norm(o).includes(q2)); return contains.length === 1 ? contains[0] : null;
+        }
+        async function refillOnce(fieldId, text) {
+            const input = document.getElementById(fieldId); if (!input) return 'nofield';
+            await respectCooldown();
+            activeField.id = fieldId;
+            closeDropdown(input);
+            await sleep(200);
+            input.focus();
+            await triggerSearch(input, text);
+            const res = await waitOptions(input, fieldId);
+            const opt = (res.ok && res.options.length) ? pickFrom(res.options, text) : null;
+            if (!opt) { activeField.id = null; delete committed[fieldId]; return 'nooption'; }
+            clickBtn(opt);
+            activeField.id = null;
+
+            const t = Date.now();
+            let got = false;
+            while (Date.now() - t < 4000) {
+                await respectCooldown();
+                const expanded = input.getAttribute('aria-expanded');
+                const val = input.value && input.value.replace(/[\u2066\u2068\u2069]/g, '').trim();
+                if (expanded === 'false' && val) { got = true; break; }
+                await sleep(150);
+            }
+            if (!got) { delete committed[fieldId]; return 'nocommit'; }
+
+            const t2 = Date.now();
+            let clean = false;
+            while (Date.now() - t2 < 4000) {
+                await respectCooldown();
+                if (!input.getAttribute('aria-invalid')) { clean = true; break; }
+                await sleep(250);
+            }
+            if (!clean) { delete committed[fieldId]; return 'nocommit'; }
+
+            markCommitted(fieldId);
+            netByField[fieldId] = 0;
+            return 'ok';
+        }
+        async function refillUntil(fieldId, text, label) {
+            const input = document.getElementById(fieldId);
+            if (!input || !text) return true;
+            if (committed[fieldId]) return true;
+            const start = Date.now();
+            let attempt = 0;
+            while (Date.now() - start < RETRY_SLOT_MS) {
+                attempt++;
+                activeField.id = fieldId;
+                report('Выбираю ' + label + ' (попытка ' + attempt + ')…');
+                const status = await refillOnce(fieldId, text);
+                if (status === 'ok' && committed[fieldId]) {
+                    report('Заполнено: ' + label);
+                    await sleep(700);
+                    return true;
+                }
+                activeField.id = null;
+                delete committed[fieldId];
+                await respectCooldown();
+                await sleep(1000);
+            }
+            report('Ошибка: ' + label + ' не выбран за 40с', 'error');
+            return false;
+        }
+        function isGood(fieldId) {
+            const el = document.getElementById(fieldId);
+            if (!el) return false;
+            if (!committed[fieldId]) return false;
+            const raw = el.value && el.value.replace(/[\u2066\u2068\u2069]/g, '');
+            return !!raw && !el.getAttribute('aria-invalid');
+        }
+        function isDateGood() {
+            const el = document.getElementById(FIELDS.date);
+            if (!el || el.getAttribute('aria-invalid')) return false;
+            return !!el.value && el.value.replace(/[\u2066\u2068\u2069]/g, '') !== 'ДД.ММ.ГГГГ';
+        }
+        async function fillDate() {
+            const input = document.getElementById(FIELDS.date);
+            if (!input) return false;
+            if (isDateGood()) return true;
+            await respectCooldown();
+            const dateBox = input.closest('.g-date-date-picker, .g-text-input') || input.parentElement;
+            const btn = dateBox && dateBox.querySelector('button[aria-label="Календарь"]');
+            if (!btn) return false;
+            clickBtn(btn);
+            for (let i = 0; i < 20; i++) {
+                await sleep(150);
+                const today = document.querySelector('.g-date-calendar__button_current');
+                if (today) { clickBtn(today); await sleep(150); const close = document.querySelector('button[aria-label="Закрыть"]'); if (close) clickBtn(close); return isDateGood(); }
+            }
+            return false;
+        }
+        // ---------- Фото из памяти родителя ----------
+        function dataUrlToFile(dataUrl, name) {
+            const [meta, b64] = dataUrl.split(',');
+            const mime = (meta.match(/data:(.*?);/) || [])[1] || 'image/jpeg';
+            const bin = atob(b64);
+            const arr = new Uint8Array(bin.length);
+            for (let i = 0; i < bin.length; i++) arr[i] = bin.charCodeAt(i);
+            return new File([arr], name, { type: mime });
+        }
+        function photoBadgeExists() {
+            return !!document.querySelector('.FileQuestion-Files .FileBadge, .FileQuestion-Files [class*="FileBadge"]');
+        }
+        async function fillPhoto(stored) {
+            const el = document.querySelector('input[name="' + FIELDS.photo + '"]');
+            if (!el) return { ok: false, why: 'nofield' };
+            if (!stored) return { ok: false, why: 'nostore' };
+            if (photoBadgeExists()) { report('Фото уже на месте'); return { ok: true, why: 'already' }; }
+            const file = dataUrlToFile(stored.data, stored.name);
+            const dt = new DataTransfer();
+            dt.items.add(file);
+            el.files = dt.files;
+            el.dispatchEvent(new Event('change', { bubbles: true }));
+            for (let i = 0; i < 10; i++) {
+                await sleep(350);
+                if (photoBadgeExists()) { report('Фото добавлено'); return { ok: true, why: 'uploaded' }; }
+            }
+            return { ok: false, why: 'rejected' };
+        }
+        function findNextBtn() {
+            return Array.from(document.querySelectorAll('button')).find(b => b.textContent.trim() === 'Далее');
+        }
+        function findSubmitBtn() {
+            return Array.from(document.querySelectorAll('button[type="submit"], button')).find(b => b.textContent.trim() === 'Отправить');
+        }
+        function hasSubmit() {
+            return Array.from(document.querySelectorAll('button')).some(b => b.textContent.trim() === 'Отправить');
+        }
+
+        function report(msg, kind) {
+            console.log('[AF-PPR]', msg);
+            try { if (window.opener) window.opener.postMessage({ type: 'AF_PPR_PROGRESS', msg, kind: kind || '' }, '*'); } catch (e) {}
+        }
+
+        // Рукопожатие: просим у родителя фото (base64 из памяти Self_check), ждём до 20с.
+        function requestPhotoFromOpener() {
+            return new Promise(resolve => {
+                const t0 = Date.now();
+                let done = false;
+                const onMsg = ev => {
+                    const d = ev.data || {};
+                    if (d.type === 'ST_PPR_DATA') {
+                        done = true;
+                        window.removeEventListener('message', onMsg);
+                        resolve((d.payload && d.payload.photo) || null);
+                    }
+                };
+                window.addEventListener('message', onMsg);
+                const ping = () => { try { if (window.opener) window.opener.postMessage({ type: 'AF_PPR_READY' }, '*'); } catch (e) {} };
+                ping();
+                const iv = setInterval(() => {
+                    if (done) { clearInterval(iv); return; }
+                    if (Date.now() - t0 > 20000) { clearInterval(iv); window.removeEventListener('message', onMsg); resolve(null); return; }
+                    ping();
+                }, 1000);
+            });
+        }
+
+        // ---------- Автозапуск ----------
+        const params = new URLSearchParams(location.search);
+        const P = { robot: params.get('r'), port: params.get('p'), executor: params.get('e'), key: params.get('k') };
+
+        if (P.robot || P.port || P.executor || P.key) {
+            let started = false, ticks = 0;
+            const ready = setInterval(async () => {
+                ticks++;
+                if (started) { clearInterval(ready); return; }
+                if (!document.getElementById(FIELDS.robot)) {
+                    if (ticks > 150) { clearInterval(ready); report('Ошибка: форма не загрузилась', 'error'); }
+                    return;
+                }
+                clearInterval(ready);
+                started = true;
+                try {
+                    await sleep(400);
+
+                    report('Старт заполнения…');
+                    const okR = await refillUntil(FIELDS.robot, P.robot, 'робота');
+                    const okP = await refillUntil(FIELDS.port, P.port, 'порт');
+                    const okE = await refillUntil(FIELDS.executor, P.executor, 'исполнителя');
+                    if (!okR || !okP || !okE) { report('Ошибка: поля не заполнены. Перезапусти.', 'error'); return; }
+
+                    await fillDate();
+
+                    const photo = await requestPhotoFromOpener();
+                    if (photoBadgeExists()) {
+                        report('Фото уже на месте, продолжаю…');
+                    } else {
+                        const ph = await fillPhoto(photo);
+                        if (!ph.ok) {
+                            report('Предупреждение: фото ' + (ph.why === 'nostore' ? 'не передано с тикета' : 'не принято формой') + '. Добавь вручную.', 'error');
+                        }
+                    }
+
+                    let guard = 0;
+                    let submitted = false;
+                    while (guard++ < 60) {
+                        for (const [name, value] of Object.entries(CLEAN)) {
+                            if (document.querySelector('input[type=radio][name="' + name + '"]')) checkRadio(name, value);
+                        }
+                        if (document.querySelector('input[name="' + KEY_FIELD + '"], textarea[name="' + KEY_FIELD + '"]')) {
+                            if (P.key) setText(KEY_FIELD, P.key);
+                        }
+                        await sleep(400);
+                        if (!submitted && hasSubmit()) {
+                            const submit = findSubmitBtn();
+                            if (submit) {
+                                clickBtn(submit);
+                                submitted = true;
+                                report('Форма отправлена, закрываю окно…', 'done');
+                                try { if (window.opener) window.opener.postMessage({ type: 'AF_PPR_DONE' }, '*'); } catch (e) {}
+                                setTimeout(() => { try { window.close(); } catch (e) {} }, 800);
+                            } else {
+                                report('Готово: форма заполнена, но кнопка не найдена.', 'done');
+                            }
+                            return;
+                        }
+                        const next = findNextBtn();
+                        if (!next) { report('Финал: «Далее» больше нет', 'done'); return; }
+                        clickBtn(next);
+                        await sleep(900);
+                    }
+                    report('Ошибка: не прошли все страницы (лимит)', 'error');
+                } catch (err) {
+                    report('Ошибка: ' + err.message, 'error');
+                }
+            }, 500);
+        }
+
+        return; // форма ППР обработана — дальше не идём
+    }
 
     // =====================================================
     //  Заказ запчастей (форма. Фронт в трекере отдаёт iframe по 154795,
@@ -639,7 +1013,34 @@
             doAction(btn, 'Замена наклеек', 'Замена наклеек', 'Наклеили новый QR', action);
         }
         if (action === 'ppr') {
-            doAction(btn, 'ППР', 'ППР робота', 'Сделали ППР', action);
+            // ППР: сначала РУЧНОЙ выбор фото робота, затем стандартный doAction
+            // («ППР робота» + комментарий) и команда Self_check открыть форму
+            // осмотра 13691922 в новом окне. Фото уйдёт родителю в память (base64)
+            // и оттуда будет вставлено в file-инпут формы.
+            const fileInput = document.createElement('input');
+            fileInput.type = 'file';
+            fileInput.accept = 'image/*';
+            fileInput.style.display = 'none';
+            fileInput.addEventListener('change', () => {
+                const f = fileInput.files && fileInput.files[0];
+                if (!f) return;
+                const rd = new FileReader();
+                rd.onload = () => {
+                    doAction(btn, 'ППР', 'ППР робота', 'Сделали ППР', action, () => {
+                        window.parent.postMessage({
+                            type: 'ST_HELPER_PPR_ORDER',
+                            payload: {
+                                photo: { name: f.name, data: rd.result },
+                                startedAt: pressTs
+                            }
+                        }, '*');
+                    });
+                };
+                rd.readAsDataURL(f);
+            });
+            document.body.appendChild(fileInput);
+            fileInput.click();
+            setTimeout(() => { try { fileInput.remove(); } catch (e) {} }, 60000);
         }
         if (action === 'microphone') {
             // Сначала выбор локации заказа запчастей

@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ST Ticket Self-Check
 // @namespace    http://tampermonkey.net/
-// @version      5.13
+// @version      5.14
 // @description  Самопроверка + форма учёта + комментарии. Переходы/поля/резолюция — через API Stracker
 // @author       You
 // @match        https://st.yandex-team.ru/*
@@ -175,7 +175,9 @@
     // =====================================================
     const COMPONENT_IDS = {
         'ROBOT_BODY_SKIN': 162077,
-        'ROBOT_ELECTRIC_WIRING': 162067
+        'ROBOT_ELECTRIC_WIRING': 162067,
+        'ROBOT_MIM': 95074,
+        'ROBOT_CALIBRATION_CHECK': 181463
     };
     const THE_DEFECT_CODE_FIELD = '60df26695151a36df681d67b--theDefectCode'; // Код дефекта
 
@@ -710,6 +712,186 @@
     }
 
     // =====================================================
+    //  ППР: форма осмотра в новом окне + авто-закрытие подтикета
+    //  «Проверить калибровки» + статусный пресет главного тикета.
+    //  Перенос из standalone PPR Fast Fill (v0.48).
+    //  Важно для калибровок: код дефекта НЕ ставим, резолюцию и
+    //  исполнителя проставляет автоматизация SDCFLEETOPS Calibration
+    //  (W32458) при закрытии — закрываем БЕЗ резолюции.
+    // =====================================================
+    const PPR_FORM_URL = 'https://forms.yandex-team.ru/ext/surveys/13691922/';
+    const PPR_CALIB = {
+        COMPONENT_ID: 181463,      // ROBOT_CALIBRATION_CHECK
+        SOLUTION: 'CONFIG',
+        COMMENT: 'Проверили калибровки'
+    };
+
+    // Фото из AutoFill (base64) — держим в памяти until рукопожатия с окном формы
+    let pprPhoto = null;
+    // Резолвер ожидания AF_PPR_DONE от окна формы
+    let pprDoneResolve = null;
+
+    function todayStr() {
+        const d = new Date();
+        return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0');
+    }
+
+    // Логин текущего пользователя (alt аватарок на странице тикета)
+    function currentLogin() {
+        const found = [...document.querySelectorAll('img[alt]')]
+            .map(im => (im.getAttribute('alt') || '').trim())
+            .find(a => /^[a-z0-9][a-z0-9._-]{1,30}$/i.test(a));
+        return found || 'lgynivvka';
+    }
+
+    // Ждём подтикет «Проверить калибровки» по связям родительского тикета
+    // (форма создаёт его не сразу после сабмита).
+    async function findCalibrationSubticket(mainKey, timeoutMs = 60000) {
+        const start = Date.now();
+        while (Date.now() - start < timeoutMs) {
+            try {
+                const r = await apiRequest('GET', `https://st-api.yandex-team.ru/v2/issues/${mainKey}/links`);
+                const links = (r.data && r.data.links) || (Array.isArray(r.data) ? r.data : []) || [];
+                for (const ln of links) {
+                    const obj = ln.object || ln.issue || null;
+                    if (!obj || !obj.key) continue;
+                    const summary = (obj.summary || obj.display || '');
+                    if (/Проверить калибровк/i.test(summary)) return obj.key;
+                }
+            } catch (e) {}
+            await sleep(3000);
+        }
+        return null;
+    }
+
+    async function closeCalibrationSubticket(mainKey, rover) {
+        if (!OAUTH_TOKEN) { showTokenModal(); return; }
+        console.log('[ST] ППР: ищу подтикет «Проверить калибровки»…');
+        showToast('ППР: ищу подтикет калибровок…', 4000);
+        const calibKey = await findCalibrationSubticket(mainKey, 60000);
+        if (!calibKey) {
+            console.warn('[ST] Не найден подтикет «Проверить калибровки»');
+            showToast('Не найден подтикет «Проверить калибровки»', 7000);
+            return;
+        }
+        console.log('[ST] Подтикет калибровок: ' + calibKey);
+
+        // Компонент + дедлайн + способ решения («В работе» требует Компоненты и Дедлайн)
+        try {
+            await apiRequest('PATCH', `https://st-api.yandex-team.ru/v3/issues/${calibKey}`,
+                { components: PPR_CALIB.COMPONENT_ID, deadline: todayStr(), solutionMethod: PPR_CALIB.SOLUTION });
+            console.log('[ST] Калибровки: компонент/дедлайн/способ проставлены');
+        } catch (e) {
+            console.warn('[ST] PATCH полей калибровок не прошёл:', e.status, String(e.text || '').slice(0, 300));
+        }
+
+        // 1. В работе (body дублирует обязательные поля перехода — как в UI-диалоге)
+        await runTransition(calibKey, ['inProgress', 'В работе'], 10000, { components: PPR_CALIB.COMPONENT_ID, deadline: todayStr() });
+        await sleep(300);
+
+        // 2. Форма учёта работ — макрос /iframe/ комментарием; вставку/выбор работы — вручную
+        const iframeMacro = `/iframe/(src="https://tools.sdc.yandex-team.ru/accounting-fleet-works?rover=${rover}&ticket=${calibKey}&platform=robot_r3&event_id=" width="1000px" height="600px" frameborder="0")`;
+        try {
+            await apiRequest('POST', `https://st-api.yandex-team.ru/v2/issues/${calibKey}/comments`, { text: iframeMacro });
+            console.log('[ST] Калибровки: форма учёта вставлена');
+        } catch (e) {}
+
+        // 3. Комментарий «Проверили калибровки»
+        try {
+            await apiRequest('POST', `https://st-api.yandex-team.ru/v2/issues/${calibKey}/comments`,
+                { text: PPR_CALIB.COMMENT + '\n\n---\nПлатон🧑🏽‍✈️' });
+        } catch (e) {}
+
+        // 4. Проверка (validation)
+        await runTransition(calibKey, ['validation', 'Проверка']);
+        await sleep(300);
+
+        // 5. Закрыть БЕЗ резолюции и кода дефекта — W32458 проставит «Решен» и исполнителя
+        let okClose = await runTransition(calibKey, 'Закрыть', 10000);
+        if (!okClose) okClose = await runTransition(calibKey, ['closed', 'closedMeta'], 10000);
+        showToast('Калибровки закрыты: ' + calibKey + (okClose ? '' : ' (переход не прошёл — проверь вручную)'), 7000);
+    }
+
+    // Ждём AF_PPR_DONE от окна формы (форма большая — даём 4 минуты)
+    function waitForPprDone(timeoutMs = 240000) {
+        return new Promise(resolve => {
+            const t0 = Date.now();
+            pprDoneResolve = () => { clearInterval(iv); pprDoneResolve = null; resolve(true); };
+            const iv = setInterval(() => {
+                if (Date.now() - t0 > timeoutMs) {
+                    clearInterval(iv);
+                    pprDoneResolve = null;
+                    resolve(false);
+                }
+            }, 500);
+        });
+    }
+
+    async function runPprOrder(payload) {
+        const startedAt = (payload && payload.startedAt) || Date.now();
+        const issueKey = getTicketKey();
+        if (!issueKey) { showToast('Не определён тикет'); return; }
+        if (!OAUTH_TOKEN) { showTokenModal(); return; }
+
+        // Данные формы — из полей тикета
+        const rover = getFieldValue('Ровер') || (payload && payload.rover) || '';
+        if (!rover) { showToast('Не найден номер ровера', 7000); return; }
+        const port = getFieldValue('Порт приписки') || '';
+        const executor = currentLogin();
+        pprPhoto = (payload && payload.photo) || null;
+
+        console.log('[ST] ППР: ровер=' + rover + ' порт=' + port + ' исполнитель=' + executor + ' тикет=' + issueKey);
+
+        // Открываем форму осмотра в новом окне; AutoFill там заполняет её сам
+        // (r/p/e/k — как в PPR Fast Fill), фото отдаём по рукопожатию AF_PPR_READY.
+        const url = new URL(PPR_FORM_URL);
+        url.searchParams.set('r', rover);
+        url.searchParams.set('p', port);
+        url.searchParams.set('e', executor);
+        url.searchParams.set('k', issueKey);
+        const win = window.open(url.href, '_blank');
+        if (!win) { showToast('Браузер заблокировал окно формы ППР', 7000); return; }
+        showToast('Форма ППР открыта в новом окне…', 4000);
+
+        const done = await waitForPprDone(240000);
+        if (!done) {
+            console.warn('[ST] Окно формы ППР не подтвердило отправку (таймаут)');
+            showToast('Форма ППР: не дождались отправки', 7000);
+            return;
+        }
+        console.log('[ST] Форма ППР отправлена');
+        showToast('Форма ППР отправлена', 4000);
+        await sleep(2000);
+        pprPhoto = null;
+
+        // Авто-закрытие подтикета «Проверить калибровки»
+        await closeCalibrationSubticket(issueKey, rover);
+
+        // Главный тикет ППР — пресет works.md: ROBOT_MIM, MAINTENANCE, check2, fixed
+        try {
+            await apiRequest('PATCH', `https://st-api.yandex-team.ru/v3/issues/${issueKey}`, {
+                components: COMPONENT_IDS['ROBOT_MIM'],
+                deadline: todayStr()
+            });
+        } catch (e) {
+            console.warn('[ST] PATCH компонента/дедлайна не прошёл:', e.status, String(e.text || '').slice(0, 300));
+        }
+        await runTransition(issueKey, 'new', 1500);
+        await runTransition(issueKey, 'treated');
+        await runTransition(issueKey, 'inProgress');
+        await setSolutionViaApi(issueKey, 'MAINTENANCE');
+        await runTransition(issueKey, ['check2', 'check']);
+        await setDefectCodeApi(issueKey, '0');
+        const closedWithRes = await runTransition(issueKey, ['closed', 'closedMeta'], 10000, { resolution: 'fixed' });
+        if (!closedWithRes) {
+            console.warn('[ST] Закрытие с резолюцией не прошло — пробуем без');
+            await runTransition(issueKey, ['closed', 'closedMeta'], 10000);
+        }
+        const elapsedSec = ((Date.now() - startedAt) / 1000).toFixed(1);
+        showToast('ППР робота: закрыт за ' + elapsedSec + ' сек', 7000);
+    }
+
+    // =====================================================
     //  Полный переход статусов — через API (Замена QR)
     // =====================================================
     async function runTicketTransition(startedAt) {
@@ -784,6 +966,31 @@
             await sleep(1000);
             const p = (event.data.payload || {});
             await runMicrophoneOrder(p.locationName, p.locationId, getTicketKey(), p.preset, p.startedAt);
+        }
+
+        // ===== ППР-флоу (перенос из PPR Fast Fill) =====
+
+        // Кнопка «ППР» в AutoFill: фото уже в payload, открываем форму
+        if (event.data.type === 'ST_HELPER_PPR_ORDER') {
+            await sleep(1000);
+            runPprOrder(event.data.payload || {});
+        }
+
+        // Окно формы ППР просит фото — отдаём из памяти
+        if (event.data.type === 'AF_PPR_READY') {
+            try { event.source.postMessage({ type: 'ST_PPR_DATA', payload: { photo: pprPhoto } }, '*'); } catch (e) {}
+        }
+
+        // Прогресс заполнения формы (ошибки — тостом)
+        if (event.data.type === 'AF_PPR_PROGRESS') {
+            const d = event.data;
+            console.log('[ST] ППР:', d.msg, d.kind || '');
+            if (d.kind === 'error') showToast('ППР: ' + d.msg, 7000);
+        }
+
+        // Форма ППР отправлена — продолжаем в тикете
+        if (event.data.type === 'AF_PPR_DONE') {
+            if (pprDoneResolve) pprDoneResolve();
         }
     });
 
