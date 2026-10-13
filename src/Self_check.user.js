@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ST Ticket Self-Check
 // @namespace    http://tampermonkey.net/
-// @version      5.6
+// @version      5.7
 // @description  Самопроверка + форма учёта + комментарии. Переходы/поля/резолюция — через API Stracker
 // @author       You
 // @match        https://st.yandex-team.ru/*
@@ -639,15 +639,15 @@
             console.log('[ST] Переход «Заказать запчасти»: ' + (okOrder ? 'выполнен' : 'не найден'));
             await sleep(2000);
 
-            // 1. Ждём iframe формы и читаем из его src surveyId + скрытые answer_* поля тикета.
-            //    Дальше отправляем форму напрямую через Forms API (без DOM iframe).
+            // 1. Ждём iframe формы и читаем из его src скрытые answer_* поля тикета (prefill).
+            //    Note: formId из src может быть псевдонимом (154795). Канонический id — SPARE_FORM.formId (13693051).
             const orderData = await getOrderIframeData(30000);
             if (!orderData) { showToast('Форма заказа не появилась', 7000); return; }
-            console.log('[ST] Форма заказа: surveyId=' + orderData.surveyId, orderData.prefill);
+            console.log('[ST] Форма заказа: prefill', orderData.prefill);
 
             // 2. Собираем ответ: наследуем prefill из src (привязка к тикету, серия и т.д.)
             //    и переопределяем обязательные поля.
-            //    ВАЖНО: по документации API Яндекс.Форм enum/suggest передаются МАССИВОМ id,
+            //    ВАЖНО: по документации API Яндекс.Форм enum/suggest передаются МАССИВОМ id
             //    (пример: "id-enum": ["id-second", "id-third"]).
             const fields = Object.assign({}, orderData.prefill);
             fields[SPARE_FORM.fields.robotStatus] = [SPARE_FORM.enumValues.notDonor];  // «Не донор»
@@ -655,12 +655,18 @@
             fields[SPARE_FORM.fields.materialType] = [SPARE_FORM.enumValues.parts];    // «Запчасти»
             if (locationId) fields[SPARE_FORM.fields.location] = [locationId];         // Локация (suggest id)
 
+            // 3. Обязательные поля стр.2 (появляются после «Далее»): серия компоненты, Вики-позиция, количество.
+            fields[SPARE_FORM.fields.productSeries] = [SPARE_FORM.wikiSerie];          // Серия ROBOT_ELECTRIC_WIRING
+            const wiki = await formsSuggest(SPARE_FORM.fields.wikiQuestion, 'Жгут MIC Service branch');
+            if (wiki && wiki.id) fields[SPARE_FORM.fields.wikiQuestion] = [String(wiki.id)];
+            fields[SPARE_FORM.fields.qtyQuestion] = ['1'];
+
             // Логируем итоговый body, чтобы было видно, что реально уходит на API.
             console.log('[ST] Body формы заказа:', JSON.stringify(fields, null, 2));
 
             let subRes = null;
             try {
-                subRes = await submitSparePartsForm(orderData.surveyId, fields);
+                subRes = await submitSparePartsForm(SPARE_FORM.formId, fields);
                 console.log('[ST] Форма заказа отправлена:', subRes);
             } catch (e) {
                 console.warn('[ST] Ошибка отправки формы заказа:', e.status, String(e.text || '').slice(0, 500));
