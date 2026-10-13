@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         QuickBase: Панель базы знаний (все сайты)
 // @namespace    https://github.com/Lgyniwka/Autofill-check/blob/main/src/QuickBase.user.js
-// @version      0.4.0
-// @description  Плавающая перетаскиваемая кнопка-ровер открывает панель базы знаний на любом сайте. Иконка — встроенный SVG (не протухает). Запасной вход: Cmd+Shift+Ё/Ctrl+~.
+// @version      0.5.0
+// @description  Панель базы знаний: компактная (460px, узкие шрифты), перетаскивается за шапку, позиция запоминается. Кнопка-ровер — маленькая и полупрозрачная (не мешает сайту), тащится мышью, ПКМ — скрыть.
 // @homepageURL  https://github.com/Lgyniwka/Autofill-check/blob/main/src/QuickBase.user.js
 // @supportURL   https://github.com/Lgyniwka/Autofill-check/blob/main/src/QuickBase.user.js
 // @updateURL    https://raw.githubusercontent.com/Lgyniwka/Autofill-check/main/src/QuickBase.user.js
@@ -250,7 +250,7 @@
         style.textContent = `
             #quickbase_btn {
                 position: fixed !important;
-                width: 48px; height: 48px;
+                width: 38px; height: 38px;
                 border-radius: 50%;
                 background: rgba(22, 26, 35, 0.92);
                 border: 1px solid #2c3345;
@@ -261,10 +261,12 @@
                 cursor: grab;
                 touch-action: none;
                 z-index: ${PANEL_Z - 1} !important;
-                opacity: 0.6;
-                transition: opacity .15s, transform .15s;
+                opacity: 0.35;
+                transition: opacity .15s, transform .15s, width .15s, height .15s;
             }
-            #quickbase_btn:hover { opacity: 1; transform: scale(1.08); }
+            #quickbase_btn:hover, #quickbase_btn:focus {
+                opacity: 1; transform: scale(1.15); z-index: ${PANEL_Z} !important;
+            }
             #quickbase_btn.qb_dragging {
                 cursor: grabbing;
                 opacity: 1;
@@ -294,6 +296,51 @@
         panel.id = PANEL_ID;
         panel.innerHTML = buildHTML();
         document.documentElement.appendChild(panel);
+
+        // --- Позиция панели: из localStorage или центр сверху ---
+        const box = panel.querySelector('.qb_box');
+        const PANEL_POS_KEY = 'qb_panel_pos';
+        let ppos;
+        try {
+            ppos = JSON.parse(localStorage.getItem(PANEL_POS_KEY));
+        } catch (e) { ppos = null; }
+        if (!ppos || typeof ppos.x !== 'number') {
+            ppos = { x: Math.max(8, (window.innerWidth - Math.min(460, window.innerWidth * 0.94)) / 2), y: Math.round(window.innerHeight * 0.08) };
+        }
+        applyPanelPos();
+
+        function applyPanelPos() {
+            const w = box.offsetWidth, h = box.offsetHeight;
+            const x = Math.min(Math.max(ppos.x, 4), Math.max(window.innerWidth - w - 4, 4));
+            const y = Math.min(Math.max(ppos.y, 4), Math.max(window.innerHeight - Math.min(h, window.innerHeight * 0.86) - 4, 4));
+            box.style.left = x + 'px';
+            box.style.top = y + 'px';
+        }
+
+        // --- Перетаскивание панели за шапку ---
+        const head = panel.querySelector('.qb_head');
+        let pdrag = null;
+        head.addEventListener('pointerdown', (e) => {
+            if (e.target.closest('.qb_kbd')) return; // подсказку не хватает
+            pdrag = { startX: e.clientX, startY: e.clientY, x: ppos.x, y: ppos.y };
+            head.setPointerCapture(e.pointerId);
+            e.preventDefault();
+        });
+        head.addEventListener('pointermove', (e) => {
+            if (!pdrag) return;
+            ppos = {
+                x: pdrag.x + (e.clientX - pdrag.startX),
+                y: pdrag.y + (e.clientY - pdrag.startY),
+            };
+            applyPanelPos();
+        });
+        const endPanelDrag = () => {
+            if (!pdrag) return;
+            try { localStorage.setItem(PANEL_POS_KEY, JSON.stringify(ppos)); } catch (err) { /* ignore */ }
+            pdrag = null;
+        };
+        head.addEventListener('pointerup', endPanelDrag);
+        head.addEventListener('pointercancel', endPanelDrag);
 
         // Клик по фону — закрыть
         panel.addEventListener('mousedown', (e) => {
@@ -391,12 +438,11 @@
                     backdrop-filter: blur(2px);
                     z-index: ${PANEL_Z};
                     font-family: -apple-system, 'Segoe UI', Roboto, Arial, sans-serif;
-                    display: flex; justify-content: center; align-items: flex-start;
-                    padding: 7vh 16px 16px;
                     box-sizing: border-box;
                 }
                 #${PANEL_ID} .qb_box {
-                    width: min(760px, 96vw); max-height: 86vh;
+                    position: fixed;
+                    width: min(460px, 94vw); max-height: 86vh;
                     overflow-y: auto;
                     background: #161a23; color: #e6e9f0;
                     border: 1px solid #2c3345; border-radius: 12px;
@@ -405,65 +451,69 @@
                     box-sizing: border-box;
                 }
                 #${PANEL_ID} .qb_head {
-                    display: flex; gap: 10px; align-items: center; margin-bottom: 10px;
+                    display: flex; gap: 10px; align-items: center; margin: -4px -6px 8px;
+                    padding: 6px; border-radius: 8px;
+                    cursor: move; user-select: none; -webkit-user-select: none;
+                    touch-action: none;
                 }
-                #${PANEL_ID} .qb_title { font-weight: 700; font-size: 15px; }
+                #${PANEL_ID} .qb_head:hover { background: #1d2330; }
+                #${PANEL_ID} .qb_title { font-weight: 700; font-size: 13px; }
                 #${PANEL_ID} .qb_kbd {
-                    margin-left: auto; font-size: 11px; color: #8b93a7;
+                    margin-left: auto; font-size: 9px; color: #8b93a7;
                     background: #1d2330; border: 1px solid #2c3345;
-                    border-radius: 6px; padding: 3px 7px; white-space: nowrap;
+                    border-radius: 5px; padding: 2px 5px; white-space: nowrap;
                 }
                 #${PANEL_ID} input#qb_search {
                     flex: 1; box-sizing: border-box;
                     background: #0f131c; color: #e6e9f0;
                     border: 1px solid #2c3345; border-radius: 8px;
-                    padding: 9px 12px; font-size: 14px; outline: none;
+                    padding: 6px 10px; font-size: 12px; outline: none;
                 }
                 #${PANEL_ID} input#qb_search:focus { border-color: #4c6ef5; }
-                #${PANEL_ID} .qb_section { margin-top: 12px; }
-                #${PANEL_ID} .qb_empty { color: #7b8395; padding: 20px 4px; font-size: 13px; text-align: center; }
+                #${PANEL_ID} .qb_section { margin-top: 8px; }
+                #${PANEL_ID} .qb_empty { color: #7b8395; padding: 14px 4px; font-size: 12px; text-align: center; }
                 #${PANEL_ID} .qb_section_title {
-                    font-size: 12px; font-weight: 700; color: #9aa3b8;
+                    font-size: 10px; font-weight: 700; color: #9aa3b8;
                     text-transform: uppercase; letter-spacing: .4px;
-                    margin: 10px 2px 6px;
+                    margin: 8px 2px 4px;
                 }
                 #${PANEL_ID} .qb_row {
-                    display: flex; flex-wrap: wrap; align-items: center; gap: 8px;
-                    padding: 7px 10px; border-radius: 8px;
+                    display: flex; flex-wrap: wrap; align-items: center; gap: 6px;
+                    padding: 5px 8px; border-radius: 7px;
                     cursor: pointer; user-select: none;
                     border: 1px solid transparent;
                 }
                 #${PANEL_ID} .qb_row:hover { background: #1d2330; border-color: #2c3345; }
-                #${PANEL_ID} .qb_expand { color: #8b93a7; font-size: 11px; width: 10px; }
-                #${PANEL_ID} .qb_label { font-size: 14px; }
+                #${PANEL_ID} .qb_expand { color: #8b93a7; font-size: 10px; width: 10px; }
+                #${PANEL_ID} .qb_label { font-size: 12.5px; }
                 #${PANEL_ID} .qb_hint {
-                    font-size: 11px; color: #8b93a7;
-                    background: #1d2330; border-radius: 5px; padding: 2px 6px;
+                    font-size: 10px; color: #8b93a7;
+                    background: #1d2330; border-radius: 4px; padding: 1px 5px;
                     white-space: nowrap;
                 }
-                #${PANEL_ID} .qb_ico { font-size: 13px; color: #6e7890; margin-left: auto; }
+                #${PANEL_ID} .qb_ico { font-size: 11px; color: #6e7890; margin-left: auto; }
                 #${PANEL_ID} .qb_text {
-                    flex-basis: 100%; font-size: 12px; color: #9aa3b8;
-                    padding: 4px 0 0 14px;
+                    flex-basis: 100%; font-size: 11px; color: #9aa3b8;
+                    padding: 3px 0 0 12px;
                 }
                 #${PANEL_ID} .qb_details {
-                    margin: 2px 8px 6px 28px;
+                    margin: 2px 6px 4px 22px;
                     background: #0f131c;
-                    border: 1px solid #2c3345; border-radius: 8px;
+                    border: 1px solid #2c3345; border-radius: 7px;
                     overflow: hidden;
                 }
                 #${PANEL_ID} .qb_details_row {
-                    display: flex; align-items: center; gap: 8px;
-                    padding: 6px 12px; cursor: pointer; user-select: none;
+                    display: flex; align-items: center; gap: 6px;
+                    padding: 4px 10px; cursor: pointer; user-select: none;
                     border-top: 1px solid #1d2330;
                 }
                 #${PANEL_ID} .qb_details_row:first-child { border-top: none; }
                 #${PANEL_ID} .qb_details_row:hover { background: #1d2330; }
-                #${PANEL_ID} .qb_details_label { font-size: 12px; color: #8b93a7; min-width: 120px; }
-                #${PANEL_ID} .qb_details_value { font-size: 13px; color: #e6e9f0; word-break: break-all; }
+                #${PANEL_ID} .qb_details_label { font-size: 10px; color: #8b93a7; min-width: 90px; }
+                #${PANEL_ID} .qb_details_value { font-size: 11.5px; color: #e6e9f0; word-break: break-all; }
                 #${PANEL_ID} .qb_row.qb_ok { border-color: #51cf66 !important; }
                 #${PANEL_ID} .qb_flash {
-                    margin-left: auto; font-size: 12px; color: #51cf66; white-space: nowrap;
+                    margin-left: auto; font-size: 10px; color: #51cf66; white-space: nowrap;
                 }
             </style>
             <div class="qb_box">
