@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ST Ticket Self-Check
 // @namespace    http://tampermonkey.net/
-// @version      5.8
+// @version      5.9
 // @description  Самопроверка + форма учёта + комментарии. Переходы/поля/резолюция — через API Stracker
 // @author       You
 // @match        https://st.yandex-team.ru/*
@@ -715,16 +715,21 @@
 
         // 2. Обработан (Передать механикам)
         await runTransition(issueKey, 'treated');
-        // 3. В работе
+        // 3. В работе (Взять в работу)
         await runTransition(issueKey, 'inProgress');
         // 4. Способ решения
         await setSolutionViaApi(issueKey, 'CHANGE');
-        // 5. Проверка
-        await runTransition(issueKey, 'check');
+        // 5. В проверку (ключ по памяти проекта — check2)
+        await runTransition(issueKey, ['check2', 'check']);
         // 6. Код дефекта
         await setDefectCodeApi(issueKey, '0');
-        // 7. Закрыт (резолюция в теле перехода)
-        await runTransition(issueKey, 'closed', 10000, { resolution: 'fixed' });
+        // 7. Закрыть: с нужной резолюцией (fixed) при наличии,
+        //    если не принимается — просто Закрыть без резолюции.
+        const closedWithRes = await runTransition(issueKey, 'closed', 10000, { resolution: 'fixed' });
+        if (!closedWithRes) {
+            console.warn('[ST] Резолюция не принята — закрываем без резолюции');
+            await runTransition(issueKey, 'closed', 10000);
+        }
 
 
         const elapsedSec = ((Date.now() - startedAt) / 1000).toFixed(1);

@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Rover ID Switcher
 // @namespace    http://tampermonkey.net/
-// @version      1.5
+// @version      1.6
 // @description  Быстрая смена номера ровера → всегда на /maintenance
 // @author       You
 // @match        https://tools.sdc.yandex-team.ru/rovers/*
@@ -38,12 +38,7 @@
             outline: none;
         `;
 
-        // Берём только цифры из текущего ID
-        const match = location.pathname.match(/\/rovers(?:-old)?\/[a-zA-Z]?(\d+)/);
-        if (match) {
-            input.value = match[1];
-        }
-
+        // Поле всегда пустое после загрузки/перехода, чтобы не дублировалось
         (document.body || document.documentElement).appendChild(input);
 
         input.addEventListener('keydown', function (e) {
