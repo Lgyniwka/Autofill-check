@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         QuickBase: Панель базы знаний (все сайты)
 // @namespace    https://github.com/Lgyniwka/Autofill-check/blob/main/src/QuickBase.user.js
-// @version      0.2.3
-// @description  Горячая клавиша Cmd+Ё (macOS) / Ctrl+~ (Windows) — открывает панель со справочниками и ссылками на любой странице браузера. Схема данных — в DATA ниже.
+// @version      0.3.0
+// @description  Плавающая кнопка-ровер (правый нижний угол) открывает панель базы знаний на любом сайте. Запасной вход: Cmd+Shift+Ё/Ctrl+~. Схема данных — в DATA ниже.
 // @homepageURL  https://github.com/Lgyniwka/Autofill-check/blob/main/src/QuickBase.user.js
 // @supportURL   https://github.com/Lgyniwka/Autofill-check/blob/main/src/QuickBase.user.js
 // @updateURL    https://raw.githubusercontent.com/Lgyniwka/Autofill-check/main/src/QuickBase.user.js
@@ -113,6 +113,95 @@
     function togglePanel() {
         if (panel) closePanel();
         else openPanel();
+    }
+
+    /* ==================================================================
+     *  ПЛАВАЮЩАЯ КНОПКА-РОВЕР (правый нижний угол, клик — панель)
+     *  QB_ICON_URL: вставь сюда прямой URL картинки ровера (текстом),
+     *  пусто — используется встроенный SVG.
+     *  ПКМ по кнопке — скрыть на этой вкладке до перезагрузки.
+     * ================================================================== */
+
+    const QB_ICON_URL = ''; // например: 'https://.../rover.png'
+
+    const QB_SVG = `
+        <svg viewBox="0 0 64 64" width="30" height="30" aria-hidden="true">
+            <!-- корпус -->
+            <rect x="10" y="18" width="44" height="22" rx="6"
+                  fill="#ffcc00" stroke="#333" stroke-width="2"/>
+            <!-- «башня» с сенсором -->
+            <rect x="24" y="10" width="16" height="8" rx="3"
+                  fill="#333"/>
+            <circle cx="50" cy="24" r="4" fill="#333"/>
+            <!-- колёса -->
+            <circle cx="18" cy="46" r="7"  fill="#222" stroke="#111" stroke-width="2"/>
+            <circle cx="46" cy="46" r="7"  fill="#222" stroke="#111" stroke-width="2"/>
+            <circle cx="18" cy="46" r="2.5" fill="#555"/>
+            <circle cx="46" cy="46" r="2.5" fill="#555"/>
+            <!-- «глаза» -->
+            <circle cx="22" cy="26" r="2.5" fill="#333"/>
+            <circle cx="34" cy="26" r="2.5" fill="#333"/>
+            <!-- синяя полоса Яндекс -->
+            <rect x="10" y="33" width="44" height="4" fill="#fc3f1d" opacity="0.85"/>
+        </svg>`;
+
+    function createFloatButton() {
+        if (sessionStorage.getItem('qb_btn_hidden') === '1') return;
+
+        const btn = document.createElement('div');
+        btn.id = 'quickbase_btn';
+        btn.title = 'QuickBase — база знаний (клик — открыть, ПКМ — скрыть)';
+
+        btn.innerHTML = QB_ICON_URL
+            ? `<img src="${QB_ICON_URL}" alt="rover" width="30" height="30">`
+            : QB_SVG;
+
+        btn.addEventListener('click', (e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            togglePanel();
+        });
+
+        btn.addEventListener('contextmenu', (e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            sessionStorage.setItem('qb_btn_hidden', '1');
+            btn.remove();
+        });
+
+        const style = document.createElement('style');
+        style.textContent = `
+            #quickbase_btn {
+                position: fixed !important;
+                right: 18px  !important;
+                bottom: 18px !important;
+                width: 48px; height: 48px;
+                border-radius: 50%;
+                background: rgba(22, 26, 35, 0.92);
+                border: 1px solid #2c3345;
+                box-shadow: 0 4px 14px rgba(0,0,0,.45);
+                display: flex !important;
+                align-items: center;
+                justify-content: center;
+                align-items: center;
+                cursor: pointer;
+                z-index: ${PANEL_Z - 1} !important;
+                opacity: 0.55;
+                transition: opacity .15s, transform .15s;
+            }
+            #quickbase_btn:hover {
+                opacity: 1;
+                transform: scale(1.08);
+            }
+            #quickbase_btn, #quickbase_btn * {
+                pointer-events: none;
+                user-select: none;
+                -webkit-user-select: none;
+            }
+            #quickbase_btn { pointer-events: auto; }
+        `;
+        document.documentElement.appendChild(style);
+        document.documentElement.appendChild(btn);
     }
 
     function closePanel() {
@@ -370,4 +459,8 @@
 
     // Глобальный перехват на capture-фазе — раньше обработчиков страницы
     window.addEventListener('keydown', onKeydown, true);
+    document.addEventListener('keydown', onKeydown, true);
+
+    // Плавающая кнопка-ровер (fallback хоткея)
+    createFloatButton();
 })();
