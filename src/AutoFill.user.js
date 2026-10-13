@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Accounting Form AutoFill
 // @namespace    https://github.com/Lgyniwka/Autofill-check
-// @version      1.7
+// @version      1.8
 // @description  Плавающая панель + отправка комментария + переход статусов только для Замена QR
 // @author       You
 // @match        https://tools.sdc.yandex-team.ru/accounting-fleet-works*
@@ -56,6 +56,20 @@
     `;
     document.head.appendChild(style);
     document.body.appendChild(panel);
+
+    // Страховка: если SPA перерисует body или скрипт запустился раньше,
+    // чем body готов — пересоздаём панель, чтобы она не терялась
+    function ensurePanelInDom() {
+        if (!document.body) return;
+        if (!style.isConnected) document.head.appendChild(style);
+        if (!document.getElementById('accounting-actions-panel')) {
+            document.body.appendChild(panel);
+        }
+    }
+    ensurePanelInDom();
+    new MutationObserver(function () {
+        ensurePanelInDom();
+    }).observe(document.documentElement, { childList: true, subtree: true });
 
     // Позиция
     try {

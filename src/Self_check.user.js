@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ST Ticket Self-Check
 // @namespace    http://tampermonkey.net/
-// @version      4.6
+// @version      4.7
 // @description  Самопроверка + форма учёта + комментарии. Переходы/поля/резолюция — через API Stracker
 // @author       You
 // @match        https://st.yandex-team.ru/*
@@ -445,6 +445,23 @@
 
 
     document.getElementById('sch-insert-btn').addEventListener('click', insertAccountingForm);
+
+
+    // =====================================================
+    //  Явный скан iframe формы учёта — снять lazy-загрузку,
+    //  чтобы скрипт формы (AutoFill) гарантированно впрыснулся
+    // =====================================================
+    function forceAccountingIframeEager() {
+        document.querySelectorAll('iframe[src*="accounting-fleet-works"]').forEach(iframe => {
+            iframe.setAttribute('loading', 'eager');
+            iframe.removeAttribute('loading');
+            console.log('[ST] iframe формы учёта: снял lazy-загрузку');
+        });
+    }
+    forceAccountingIframeEager();
+    new MutationObserver(function () {
+        forceAccountingIframeEager();
+    }).observe(document.body, { childList: true, subtree: true });
 
 
     runCheck();
