@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ST Ticket Self-Check
 // @namespace    http://tampermonkey.net/
-// @version      5.2
+// @version      5.3
 // @description  Самопроверка + форма учёта + комментарии. Переходы/поля/резолюция — через API Stracker
 // @author       You
 // @match        https://st.yandex-team.ru/*
@@ -181,7 +181,8 @@
 
     // Найти iframe формы заказа (154795) в комментарии тикета и отправить в него данные о локации.
     // AutoFill (второй @match) внутри iframe заполнит форму и нажмёт Далее/Отправить.
-    async function sendOrderToForm(locationName, timeoutMs = 15000) {
+    // Форма грузится асинхронно, поэтому не слать один раз, а повторять пока не получим подтверждение AF_ORDER_RECEIVED.
+    async function sendOrderToForm(locationName, timeoutMs = 30000) {
         const srcLike = '/surveys/154795';
         const start = Date.now();
         while (Date.now() - start < timeoutMs) {
@@ -193,17 +194,38 @@
                         type: 'ST_ORDER_SPARE_PARTS',
                         payload: { locationName }
                     }, '*');
-                    console.log('[ST] Отправил в iframe формы заказа локацию:', locationName);
-                    return true;
+                    // Ждём подтверждение от AutoFill внутри iframe (до 3 сек между повторами).
+                    if (await waitForAck(3000)) {
+                        console.log('[ST] Форма заказа приняла локацию:', locationName);
+                        return true;
+                    }
+                    console.log('[ST] Iframe найден, но AutoFill ещё не ответил — повторяю…');
                 } catch (e) {
                     console.warn('[ST] postMessage в iframe формы не прошёл:', String(e));
-                    return false;
                 }
             }
-            await sleep(500);
+            await sleep(800);
         }
-        console.warn('[ST] iframe формы заказа 154795 не найден за отведённое время.');
+        console.warn('[ST] iframe формы заказа 154795 не подтвердил приём за отведённое время.');
         return false;
+    }
+
+    // Ждём сообщение AF_ORDER_RECEIVED от AutoFill (в пределах timeoutMs).
+    function waitForAck(timeoutMs = 3000) {
+        return new Promise(resolve => {
+            const onMsg = ev => {
+                const d = ev.data || {};
+                if (d && d.type === 'AF_ORDER_RECEIVED') {
+                    window.removeEventListener('message', onMsg);
+                    resolve(true);
+                }
+            };
+            window.addEventListener('message', onMsg);
+            setTimeout(() => {
+                window.removeEventListener('message', onMsg);
+                resolve(false);
+            }, timeoutMs);
+        });
     }
 
 
@@ -653,7 +675,6 @@
             await runTransition(issueKey, 'check');
             await setDefectCodeApi(issueKey, '0');
             await runTransition(issueKey, 'closed', 10000, { resolution: 'fixed' });
-            await sendPostComment(issueKey, 'Установили жгут микрофона');
             showToast('Жгут микрофона: готово', 7000);
         } catch (e) {
             console.warn('[ST] Ошибка заказа запчастей:', e.status, String(e.text || '').slice(0, 500));

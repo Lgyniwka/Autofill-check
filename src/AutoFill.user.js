@@ -240,9 +240,16 @@
     }
 
     if (IS_SPARE_ORDER_FORM) {
+        let formBusy = false;
         window.addEventListener('message', ev => {
             const d = ev.data || {};
             if (d && d.type === 'ST_ORDER_SPARE_PARTS' && d.payload && d.payload.locationName) {
+                if (formBusy) { console.warn('[AF] Форма уже заполняется, пропуск.'); return; }
+                formBusy = true;
+                // Подтверждаем родителю, что сообщение дошло и AutoFill жив.
+                ev.source && ev.source.postMessage && ev.source.postMessage(
+                    { type: 'AF_ORDER_RECEIVED' }, '*'
+                );
                 runSpareOrderForm(d.payload.locationName);
             }
         });
