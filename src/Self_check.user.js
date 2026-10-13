@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ST Ticket Self-Check
 // @namespace    http://tampermonkey.net/
-// @version      4.8
+// @version      4.9
 // @description  Самопроверка + форма учёта + комментарии. Переходы/поля/резолюция — через API Stracker
 // @author       You
 // @match        https://st.yandex-team.ru/*
@@ -592,7 +592,18 @@
         if (!issueKey) { console.warn('[ST] Тикет не определён для заказа жгута'); showToast('Не определён тикет'); return; }
 
         try {
-            // 0. Локация — либо по id из AutoFill, либо по тексту
+            // 0. «Обработан» (Передать механикам) — через API. Только после этого
+            //    на родителе появляется кнопка «Заказать запчасти».
+            console.log('[ST] Жгут микрофона: перевожу в «Обработан»');
+            await runTransitionByDisplay(issueKey, 'Передать механикам', 8000);
+            await sleep(1500);
+
+            // 0.1 Кнопка «Заказать запчасти» вставляет форму 13693051 в комментарий тикета
+            const clicked = await clickByText('Заказать запчасти', 15000);
+            console.log('[ST] Кнопка «Заказать запчасти»: ' + (clicked ? 'нажата' : 'не найдена'));
+            await sleep(1500);
+
+            // 1. Локация — либо по id из AutoFill, либо по тексту
             let locId = locationId;
             if (!locId) {
                 const loc = await formsSuggest(SPARE_FORM.fields.location, locationName);
@@ -600,15 +611,15 @@
             }
             if (!locId) { showToast('Локация не найдена: ' + locationName); return; }
 
-            // 1. Серия компонент — по префиксу
+            // 2. Серия компонент — по префиксу
             const serie = await formsSuggest(SPARE_FORM.fields.productSeries, 'robot_electric_wiring');
             if (!serie || !serie.id) { showToast('Серия ROBOT_ELECTRIC_WIRING не найдена'); return; }
 
-            // 2. Позиция Вики
+            // 3. Позиция Вики
             const wiki = await formsSuggest(SPARE_FORM.fields.wikiQuestion, SPARE_FORM.wikiText);
             if (!wiki || !wiki.id) { showToast('Позиция Вики не найдена: ' + SPARE_FORM.wikiText); return; }
 
-            // 3. Submit формы (создаёт тикет SDCWH)
+            // 4. Submit формы (создаёт тикет SDCWH)
             const fieldsMap = {
                 [SPARE_FORM.fields.location]: locId,
                 [SPARE_FORM.fields.robotStatus]: SPARE_FORM.enumValues.notDonor,
@@ -625,58 +636,20 @@
             console.log('[ST] Ответ форм:', JSON.stringify(res));
             showToast('Заказ запчастей создан (SDCWH)', 4000);
 
-            // 4. Полный переход статусов до «Закрыт» (пресет жгута микрофона)
+            // 5. Далее статусы: «В работе» → «Проверка» → «Закрыт» + итоговый комментарий
             await sleep(1500);
-            await runTicketTransitionFor(issueKey, {
-                component: 'ROBOT_ELECTRIC_WIRING',
-                solutionMethod: 'CHANGE',
-                commentText: 'Установили жгут микрофона'
-            });
+            await runTransitionByDisplay(issueKey, 'Взять в работу');
+            await setSolutionViaApi(issueKey, 'CHANGE');
+            await runTransitionByDisplay(issueKey, 'В проверку');
+            await setDefectCodeApi(issueKey, '0');
+            await runTransitionByDisplay(issueKey, 'Закрыть (нужный)', 10000, { resolution: 'fixed' });
+            await sendPostComment(issueKey, 'Установили жгут микрофона');
+            showToast('Жгут микрофона: готово', 7000);
         } catch (e) {
             console.warn('[ST] Ошибка заказа запчастей:', e.status, String(e.text || '').slice(0, 500));
             showToast('Не удалось создать заказ запчастей: ' + String(e.status || 'err'), 7000);
         }
     }
-
-    // =====================================================
-    //  Обобщённый полный переход статусов до «Закрыт» (через API)
-    //  preset: { component, solutionMethod, commentText }
-    // =====================================================
-    async function runTicketTransitionFor(issueKey, preset, startedAt) {
-        startedAt = startedAt || Date.now();
-        const comp = (preset && preset.component) || 'ROBOT_BODY_SKIN';
-        const method = (preset && preset.solutionMethod) || 'CHANGE';
-        const commentText = (preset && preset.commentText) || 'Работа выполнена';
-        console.log('[ST Helper] Переход статусов — через API (компонент ' + comp + ')');
-        if (!issueKey) { console.warn('[ST] Тикет не определён'); return; }
-        if (!OAUTH_TOKEN) { showTokenModal(); return; }
-
-        // 0. Если не в «Новом» — переводим туда
-        await runTransitionByDisplay(issueKey, 'Новый', 1500);
-
-        // 1. Компонент
-        await setComponentApi(issueKey, comp);
-
-        // 2. Обработан (Передать механикам)
-        await runTransitionByDisplay(issueKey, 'Передать механикам');
-        // 3. В работе
-        await runTransitionByDisplay(issueKey, 'Взять в работу');
-        // 4. Способ решения
-        await setSolutionViaApi(issueKey, method);
-        // 5. Проверка
-        await runTransitionByDisplay(issueKey, 'В проверку');
-        // 6. Код дефекта
-        await setDefectCodeApi(issueKey, '0');
-        // 7. Закрыт (резолюция в теле перехода)
-        await runTransitionByDisplay(issueKey, 'Закрыть (нужный)', 10000, { resolution: 'fixed' });
-        // 8. Итоговый комментарий
-        await sendPostComment(issueKey, commentText);
-
-        const elapsedSec = ((Date.now() - startedAt) / 1000).toFixed(1);
-        console.log('[ST Helper] Переход статусов завершён за ' + elapsedSec + ' сек');
-        showToast('Жгут микрофона: готово за ' + elapsedSec + ' сек', 7000);
-    }
-
 
     // =====================================================
     //  Полный переход статусов — через API (Замена QR)
