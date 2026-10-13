@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Accounting Form AutoFill
 // @namespace    https://github.com/Lgyniwka/Autofill-check
-// @version      2.14
+// @version      2.15
 // @description  Плавающая панель + отправка комментария + переход статусов только для Замена QR
 // @author       You
 // @match        https://tools.sdc.yandex-team.ru/accounting-fleet-works*
@@ -590,7 +590,7 @@
         if (action === 'battery') {
             // Замена жгута АКБ (без коннектора): та же схема, пресет battery
             showLocationModal((locationName, locationId) => {
-                doAction(btn, 'замена жгута АКБ', 'R3.9 Замена жгута АКБ', 'Заменили жгут АКБ', action, () => {
+                doAction(btn, 'замена жгута АКБ', 'R3.9 Замена жгута АКБ', 'Заменили жгуты АКБ', action, () => {
                     window.parent.postMessage({
                         type: 'ST_HELPER_MICROPHONE_ORDER',
                         payload: {
