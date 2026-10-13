@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ST Ticket Self-Check
 // @namespace    http://tampermonkey.net/
-// @version      5.1
+// @version      5.2
 // @description  Самопроверка + форма учёта + комментарии. Переходы/поля/резолюция — через API Stracker
 // @author       You
 // @match        https://st.yandex-team.ru/*
@@ -177,6 +177,33 @@
             body: fieldsMap
         });
         return r.data || {};
+    }
+
+    // Найти iframe формы заказа (154795) в комментарии тикета и отправить в него данные о локации.
+    // AutoFill (второй @match) внутри iframe заполнит форму и нажмёт Далее/Отправить.
+    async function sendOrderToForm(locationName, timeoutMs = 15000) {
+        const srcLike = '/surveys/154795';
+        const start = Date.now();
+        while (Date.now() - start < timeoutMs) {
+            const frames = [...document.querySelectorAll('iframe[src*="' + srcLike + '"]')];
+            if (frames.length) {
+                const f = frames[frames.length - 1];
+                try {
+                    f.contentWindow.postMessage({
+                        type: 'ST_ORDER_SPARE_PARTS',
+                        payload: { locationName }
+                    }, '*');
+                    console.log('[ST] Отправил в iframe формы заказа локацию:', locationName);
+                    return true;
+                } catch (e) {
+                    console.warn('[ST] postMessage в iframe формы не прошёл:', String(e));
+                    return false;
+                }
+            }
+            await sleep(500);
+        }
+        console.warn('[ST] iframe формы заказа 154795 не найден за отведённое время.');
+        return false;
     }
 
 
@@ -605,43 +632,18 @@
             console.log('[ST] Переход в «Обработан»: ' + (okTreated ? 'выполнен' : 'не найден'));
             await sleep(1500);
 
-            // 0.1 Переход «Заказать запчасти» (treated -> delieveryWaiting) открывает доступ к форме 13693051
+            // 0.1 Переход «Заказать запчасти» (treated -> delieveryWaiting) открывает в комментарии iframe формы 154795
             const okOrder = await runTransition(issueKey, 'delieveryWaiting', 15000);
             console.log('[ST] Переход «Заказать запчасти»: ' + (okOrder ? 'выполнен' : 'не найден'));
-            await sleep(1500);
+            await sleep(2000);
 
-            // 1. Локация — либо по id из AutoFill, либо по тексту
-            let locId = locationId;
-            if (!locId) {
-                const loc = await formsSuggest(SPARE_FORM.fields.location, locationName);
-                locId = loc ? loc.id : null;
-            }
-            if (!locId) { showToast('Локация не найдена: ' + locationName); return; }
-
-            // 2. Серия компонент — по префиксу
-            const serie = await formsSuggest(SPARE_FORM.fields.productSeries, 'robot_electric_wiring');
-            if (!serie || !serie.id) { showToast('Серия ROBOT_ELECTRIC_WIRING не найдена'); return; }
-
-            // 3. Позиция Вики
-            const wiki = await formsSuggest(SPARE_FORM.fields.wikiQuestion, SPARE_FORM.wikiText);
-            if (!wiki || !wiki.id) { showToast('Позиция Вики не найдена: ' + SPARE_FORM.wikiText); return; }
-
-            // 4. Submit формы (создаёт тикет SDCWH)
-            const fieldsMap = {
-                [SPARE_FORM.fields.location]: locId,
-                [SPARE_FORM.fields.robotStatus]: SPARE_FORM.enumValues.notDonor,
-                [SPARE_FORM.fields.isSC]: SPARE_FORM.enumValues.no,
-                [SPARE_FORM.fields.materialType]: SPARE_FORM.enumValues.parts,
-                [SPARE_FORM.fields.productSeries]: serie.id,
-                [SPARE_FORM.fields.wikiQuestion]: wiki.id,
-                [SPARE_FORM.fields.qtyQuestion]: SPARE_FORM.qty,
-                issue_key: issueKey,
-                model_objeckt: 'robot_r3'
-            };
-            console.log('[ST] Submit заказа запчастей жгута микрофона', JSON.stringify(fieldsMap));
-            const res = await submitSparePartsForm(fieldsMap);
-            console.log('[ST] Ответ форм:', JSON.stringify(res));
-            showToast('Заказ запчастей создан (SDCWH)', 4000);
+            // 1. Ждём появления iframe формы заказа (154795) и шлём в него данные о локации.
+            //    AutoFill (со вторым @match) внутри iframe заполнит форму и нажмёт Далее/Отправить.
+            const sent = await sendOrderToForm(locationName);
+            if (!sent) { showToast('Форма заказа не появилась', 7000); return; }
+            showToast('Форма заказа заполняется…', 4000);
+            // Даём время AutoFill заполнить и отправить форму
+            await sleep(8000);
 
             // 5. Далее статусы: «Ожидание поставки» → «Обработан» → «В работе» → «Проверка» → «Закрыт» + итоговый комментарий
             await sleep(1500);
