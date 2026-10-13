@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         QuickBase: Панель базы знаний (все сайты)
 // @namespace    https://github.com/Lgyniwka/Autofill-check/blob/main/src/QuickBase.user.js
-// @version      0.5.0
-// @description  Панель базы знаний: компактная (460px, узкие шрифты), перетаскивается за шапку, позиция запоминается. Кнопка-ровер — маленькая и полупрозрачная (не мешает сайту), тащится мышью, ПКМ — скрыть.
+// @version      0.6.0
+// @description  Панель базы знаний живёт рядом с сайтом: нет затемнения, клики по сайту проходят мимо и панель не закрывается — удобно копировать логин/пароль не закрывая базу. Перетаскивается, позиция запоминается. Кнопка-ровер — полупрозрачная, тащится мышью, ПКМ — скрыть.
 // @homepageURL  https://github.com/Lgyniwka/Autofill-check/blob/main/src/QuickBase.user.js
 // @supportURL   https://github.com/Lgyniwka/Autofill-check/blob/main/src/QuickBase.user.js
 // @updateURL    https://raw.githubusercontent.com/Lgyniwka/Autofill-check/main/src/QuickBase.user.js
@@ -342,10 +342,8 @@
         head.addEventListener('pointerup', endPanelDrag);
         head.addEventListener('pointercancel', endPanelDrag);
 
-        // Клик по фону — закрыть
-        panel.addEventListener('mousedown', (e) => {
-            if (e.target === panel) closePanel();
-        });
+        // Кнопка ✕ — закрытие (клик по сайту панель больше не закрывает)
+        panel.querySelector('.qb_close').addEventListener('click', closePanel);
 
         // Поиск
         const input = panel.querySelector('#qb_search');
@@ -434,14 +432,15 @@
             <style>
                 #${PANEL_ID} {
                     position: fixed; inset: 0;
-                    background: rgba(15, 18, 25, 0.55);
-                    backdrop-filter: blur(2px);
+                    background: none;
                     z-index: ${PANEL_Z};
                     font-family: -apple-system, 'Segoe UI', Roboto, Arial, sans-serif;
                     box-sizing: border-box;
+                    pointer-events: none; /* клики уходят на сайт */
                 }
                 #${PANEL_ID} .qb_box {
                     position: fixed;
+                    pointer-events: auto; /* клики работают только внутри панели */
                     width: min(460px, 94vw); max-height: 86vh;
                     overflow-y: auto;
                     background: #161a23; color: #e6e9f0;
@@ -457,6 +456,11 @@
                     touch-action: none;
                 }
                 #${PANEL_ID} .qb_head:hover { background: #1d2330; }
+                #${PANEL_ID} .qb_close {
+                    cursor: pointer; color: #8b93a7; font-size: 12px;
+                    padding: 2px 7px; border-radius: 5px; flex: none;
+                }
+                #${PANEL_ID} .qb_close:hover { color: #fff; background: #c92a2a; }
                 #${PANEL_ID} .qb_title { font-weight: 700; font-size: 13px; }
                 #${PANEL_ID} .qb_kbd {
                     margin-left: auto; font-size: 9px; color: #8b93a7;
@@ -520,6 +524,7 @@
                 <div class="qb_head">
                     <span class="qb_title">⚡ QuickBase — база знаний</span>
                     <span class="qb_kbd">${isMacOS() ? 'Cmd+Shift+Ё · Ctrl+Ё / Esc' : 'Ctrl+~ / Esc'}</span>
+                    <span class="qb_close" title="Закрыть">✕</span>
                 </div>
                 <input id="qb_search" type="text" placeholder="Поиск по разделам и работам…" autocomplete="off">
                 <div id="qb_sections">${sectionsHTML}</div>
