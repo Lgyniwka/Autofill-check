@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Accounting Form AutoFill
 // @namespace    https://github.com/Lgyniwka/Autofill-check
-// @version      2.7
+// @version      2.8
 // @description  Плавающая панель + отправка комментария + переход статусов только для Замена QR
 // @author       You
 // @match        https://tools.sdc.yandex-team.ru/accounting-fleet-works*
@@ -153,12 +153,22 @@
                 await pickOption('Нет');        // Это СК?
                 await new Promise(r => setTimeout(r, 300));
                 await pickOption('Запчасти');   // Тип ТМЦ
-                await new Promise(r => setTimeout(r, 400));
+                await new Promise(r => setTimeout(r, 600));
 
-                // Далее: если кнопка есть — жмём (переход на стр.2 с Вики).
+                // «Серия компонент» появляется на стр.1 после выбора «Запчасти»
+                // (id=answer_wiki_9008976633551088). Вводим префикс серии и выбираем
+                // опцию ROBOT_ELECTRIC_WIRING — только после этого «Далее» откроет
+                // страницу с Вики и Количеством.
+                const seriesInput = await waitFor('#answer_wiki_9008976633551088', 8000);
+                if (!seriesInput) { console.warn('[AF] Поле «Серия компонент» не найдено'); return; }
+                await pickSuggest(seriesInput, 'robot_electric_wiring');
+                console.log('[AF] Серия ROBOT_ELECTRIC_WIRING выбрана');
+                await new Promise(r => setTimeout(r, 600));
+
+                // Далее: переход на стр.2 с Вики.
                 const nextBtn = await waitForText('Далее', 4000);
                 if (nextBtn) { clickEl(nextBtn); console.log('[AF] Нажали «Далее»'); await new Promise(r => setTimeout(r, 800)); }
-                else { console.log('[AF] Кнопки «Далее» нет — форма одностраничная'); }
+                else { console.log('[AF] Кнопки «Далее» нет — страница с Вики уже видна'); }
 
                 // Стр.2: Вики (suggest «Жгут MIC Service branch») + Количество (=1).
                 const wikiInput = await findInputByQuestionLabel('Вики', 8000);
