@@ -689,7 +689,7 @@
             await setSolutionViaApi(issueKey, 'CHANGE');
             await runTransition(issueKey, 'check');
             await setDefectCodeApi(issueKey, '0');
-            await runTransition(issueKey, 'closed', 10000, { resolution: 'fixed' });
+            await runTransition(issueKey, ['closed', 'closedMeta'], 10000, { resolution: 'fixed' });
             showToast('Жгут микрофона: готово', 7000);
         } catch (e) {
             console.warn('[ST] Ошибка заказа запчастей:', e.status, String(e.text || '').slice(0, 500));
@@ -723,12 +723,13 @@
         await runTransition(issueKey, ['check2', 'check']);
         // 6. Код дефекта
         await setDefectCodeApi(issueKey, '0');
-        // 7. Закрыть: с нужной резолюцией (fixed) при наличии,
-        //    если не принимается — просто Закрыть без резолюции.
-        const closedWithRes = await runTransition(issueKey, 'closed', 10000, { resolution: 'fixed' });
+        // 7. Закрыть: всегда с резолюцией fixed. Ищем «Закрыть(нужный)» (closed/closedMeta),
+        //    если его нет — берём обычный «Закрыть», но резолюцию всё равно ставим.
+        //    Только если сам POST с резолюцией не принимается — повторяем без неё.
+        const closedWithRes = await runTransition(issueKey, ['closed', 'closedMeta'], 10000, { resolution: 'fixed' });
         if (!closedWithRes) {
-            console.warn('[ST] Резолюция не принята — закрываем без резолюции');
-            await runTransition(issueKey, 'closed', 10000);
+            console.warn('[ST] Ключ закрытия с резолюцией не найден/не прошёл — пробуем без резолюции');
+            await runTransition(issueKey, ['closed', 'closedMeta'], 10000);
         }
 
 
