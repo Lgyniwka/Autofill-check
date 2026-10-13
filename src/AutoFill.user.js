@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Accounting Form AutoFill
 // @namespace    https://github.com/Lgyniwka/Autofill-check
-// @version      2.10
+// @version      2.11
 // @description  Плавающая панель + отправка комментария + переход статусов только для Замена QR
 // @author       You
 // @match        https://tools.sdc.yandex-team.ru/accounting-fleet-works*
@@ -161,7 +161,19 @@
                 }, 300);
             });
         }
-        async function setQuantityToOne() {
+        // Пресеты заказа запчастей: серия компонент, Вики-позиция, количество
+        const SPARE_PRESETS = {
+            mic: {
+                seriesQuery: 'robot_electric_wiring', seriesChip: 'ROBOT_ELECTRIC_WIRING',
+                wikiText: 'Жгут MIC Service branch', qty: '1'
+            },
+            battery: {
+                seriesQuery: 'robot_battery', seriesChip: 'ROBOT_BATTERY',
+                wikiText: '3.9 Battery Harness', qty: '2'
+            }
+        };
+
+        async function setQuantity(value) {
             const t0 = Date.now();
             return new Promise(resolve => {
                 const iv = setInterval(() => {
@@ -169,7 +181,7 @@
                         .find(el => el.closest('.Question') && /количеств/i.test(el.closest('.Question').textContent));
                     if (q) {
                         clearInterval(iv);
-                        setValue(q, '1');
+                        setValue(q, value);
                         resolve(true);
                     }
                     else if (Date.now() - t0 > 6000) { clearInterval(iv); resolve(false); }
@@ -177,8 +189,9 @@
             });
         }
 
-        async function runSpareOrderForm(locationName) {
-            console.log('[AF] Заполняю форму заказа, локация =', locationName);
+        async function runSpareOrderForm(locationName, presetKey) {
+            const preset = SPARE_PRESETS[presetKey] || SPARE_PRESETS.mic;
+            console.log('[AF] Заполняю форму заказа, пресет =', presetKey, 'локация =', locationName);
             try {
                 // Стр.1: Локация + Статус робота + СК + Тип ТМЦ, кнопка «Далее»
                 const locInput = await waitFor('#answer_wiki_9008987764243672', 12000);
@@ -199,19 +212,19 @@
                 await new Promise(r => setTimeout(r, 800));
 
                 // «Серия компонент» появляется после выбора «Запчасти».
-                // Вводим префикс серии и кликаем опцию ROBOT_ELECTRIC_WIRING.
                 const seriesInput = await waitFor('#answer_wiki_9008976633551088', 8000);
                 if (!seriesInput) { console.warn('[AF] Поле «Серия компонент» не найдено'); return; }
-                let seriesPicked = await pickSuggest(seriesInput, 'robot_electric_wiring');
+                let seriesPicked = await pickSuggest(seriesInput, preset.seriesQuery);
                 if (!seriesPicked) {
                     console.warn('[AF] Серия: первая попытка не удалась, повтор');
-                    seriesPicked = await pickSuggest(seriesInput, 'ROBOT_ELECTRIC_WIRING');
+                    seriesPicked = await pickSuggest(seriesInput, preset.seriesChip);
                 }
                 // Верификация: выбранная серия появляется в чипсах поля
                 let seriesOk = false;
+                const chipRe = new RegExp(preset.seriesChip, 'i');
                 for (let i = 0; i < 10; i++) {
                     const holder = seriesInput.closest('.Question') || document;
-                    if (/ROBOT_ELECTRIC_WIRING/i.test(holder.textContent || '')) { seriesOk = true; break; }
+                    if (chipRe.test(holder.textContent || '')) { seriesOk = true; break; }
                     await new Promise(r => setTimeout(r, 400));
                 }
                 console.log('[AF] Серия:', seriesPicked, 'видна в поле:', seriesOk);
@@ -223,16 +236,16 @@
                 if (nextBtn) { clickEl(nextBtn); console.log('[AF] Нажали «Далее»'); await new Promise(r => setTimeout(r, 1200)); }
                 else { console.log('[AF] Кнопки «Далее» нет — страница с Вики уже видна'); }
 
-                // Стр.2: Вики (suggest «Жгут MIC Service branch») + Количество (=1).
+                // Стр.2: Вики (suggest по пресету) + Количество (из пресета).
                 const wikiInput = await findInputByQuestionLabel('Вики', 8000);
                 if (wikiInput) {
-                    const picked = await pickSuggest(wikiInput, 'Жгут MIC Service branch');
-                    console.log('[AF] Вики выбрана:', picked);
+                    const picked = await pickSuggest(wikiInput, preset.wikiText);
+                    console.log('[AF] Вики выбрана:', picked, preset.wikiText);
                 } else {
                     console.warn('[AF] Поле «Вики» не найдено');
                 }
                 await new Promise(r => setTimeout(r, 400));
-                await setQuantityToOne();
+                await setQuantity(preset.qty);
 
                 await new Promise(r => setTimeout(r, 400));
                 const send = await waitForText('Отправить', 8000);
@@ -258,19 +271,21 @@
                 if (formBusy) { console.warn('[AF] Форма уже заполняется, пропуск.'); return; }
                 formBusy = true;
                 ev.source && ev.source.postMessage && ev.source.postMessage({ type: 'AF_ORDER_RECEIVED' }, '*');
-                runSpareOrderForm(d.payload.locationName);
+                runSpareOrderForm(d.payload.locationName, d.payload.preset);
             }
         });
 
         // Сценарий «новое окно»: Self_check открывает src-ссылку iframe в отдельной вкладке
-        // и передаёт локацию через GET-параметр st_location.
-        const urlLoc = new URL(location.href).searchParams.get('st_location');
+        // и передаёт локацию (st_location) и пресет (st_preset) GET-параметрами.
+        const urlParams = new URL(location.href).searchParams;
+        const urlLoc = urlParams.get('st_location');
         if (urlLoc) {
-            console.log('[AF] Запуск из открытого окна, локация =', urlLoc);
+            const presetKey = urlParams.get('st_preset') || 'mic';
+            console.log('[AF] Запуск из открытого окна, пресет =', presetKey, 'локация =', urlLoc);
             if (formBusy) { console.warn('[AF] Форма уже заполняется, пропуск.'); }
             else {
                 formBusy = true;
-                runSpareOrderForm(urlLoc);
+                runSpareOrderForm(urlLoc, presetKey);
             }
         }
 
@@ -291,6 +306,7 @@
             <button class="acp-btn" data-action="stickers">Замена QR</button>
             <button class="acp-btn" data-action="ppr">ППР робота</button>
             <button class="acp-btn" data-action="microphone">Установка жгута микрофонов</button>
+            <button class="acp-btn" data-action="battery">Замена жгута АКБ без кон.</button>
         </div>
     `;
 
@@ -555,7 +571,23 @@
                         type: 'ST_HELPER_MICROPHONE_ORDER',
                         payload: {
                             locationName,
-                            locationId
+                            locationId,
+                            preset: 'mic'
+                        }
+                    }, '*');
+                });
+            });
+        }
+        if (action === 'battery') {
+            // Замена жгута АКБ (без коннектора): та же схема, пресет battery
+            showLocationModal((locationName, locationId) => {
+                doAction(btn, 'замена жгута АКБ', 'R3.9 Замена жгута АКБ', 'Заменили жгут АКБ', action, () => {
+                    window.parent.postMessage({
+                        type: 'ST_HELPER_MICROPHONE_ORDER',
+                        payload: {
+                            locationName,
+                            locationId,
+                            preset: 'battery'
                         }
                     }, '*');
                 });

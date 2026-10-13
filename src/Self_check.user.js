@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ST Ticket Self-Check
 // @namespace    http://tampermonkey.net/
-// @version      5.10
+// @version      5.11
 // @description  Самопроверка + форма учёта + комментарии. Переходы/поля/резолюция — через API Stracker
 // @author       You
 // @match        https://st.yandex-team.ru/*
@@ -630,7 +630,8 @@
         });
     }
 
-    async function runMicrophoneOrder(locationName, locationId, issueKey) {
+    async function runMicrophoneOrder(locationName, locationId, issueKey, preset) {
+        preset = preset || 'mic';
         if (!OAUTH_TOKEN) { showTokenModal(); return; }
         if (!issueKey) { console.warn('[ST] Тикет не определён для заказа жгута'); showToast('Не определён тикет'); return; }
 
@@ -667,6 +668,7 @@
             const openUrl = new URL(orderData.openUrl);
             openUrl.searchParams.set('st_location', locationName);
             openUrl.searchParams.set('st_location_id', locationId || '');
+            openUrl.searchParams.set('st_preset', preset);
 
             // Открываем в новом окне и ждём подтверждение AF_ORDER_DONE от AutoFill.
             const win = window.open(openUrl.href, '_blank');
@@ -771,7 +773,7 @@
         if (event.data.type === 'ST_HELPER_MICROPHONE_ORDER') {
             await sleep(1000);
             const p = (event.data.payload || {});
-            await runMicrophoneOrder(p.locationName, p.locationId, getTicketKey());
+            await runMicrophoneOrder(p.locationName, p.locationId, getTicketKey(), p.preset);
         }
     });
 
