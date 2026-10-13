@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Accounting Form AutoFill
 // @namespace    https://github.com/Lgyniwka/Autofill-check
-// @version      2.17
+// @version      2.18
 // @description  Плавающая панель + отправка комментария + переход статусов только для Замена QR
 // @author       You
 // @match        https://tools.sdc.yandex-team.ru/accounting-fleet-works*
@@ -93,7 +93,9 @@
         async function pickSuggest(input, value) {
             if (!input || !value) return false;
             setValue(input, value);
-            const norm = s => (s || '').trim().toLowerCase();
+            // Вики-тексты содержат двойные пробелы («1.5  Battery extender») —
+            // нормализуем, иначе includes не находит опцию.
+            const norm = s => (s || '').toLowerCase().replace(/\s+/g, ' ').trim();
             const t0 = Date.now();
             return new Promise(resolve => {
                 const iv = setInterval(() => {
