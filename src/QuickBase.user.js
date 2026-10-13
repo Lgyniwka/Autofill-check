@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         QuickBase: Панель базы знаний (все сайты)
 // @namespace    https://github.com/Lgyniwka/Autofill-check/blob/main/src/QuickBase.user.js
-// @version      0.8.0
+// @version      0.8.1
 // @description  Панель базы знаний живёт рядом с сайтом. Сворачиваемые: заголовки секций (Инструкции/Информация/Ссылки — состояние запоминается) и все строки с доп. данными (логин/пароль/details с копированием). Кнопка-ровер — полупрозрачная, тащится, ПКМ — скрыть.
 // @homepageURL  https://github.com/Lgyniwka/Autofill-check/blob/main/src/QuickBase.user.js
 // @supportURL   https://github.com/Lgyniwka/Autofill-check/blob/main/src/QuickBase.user.js
@@ -61,8 +61,11 @@
                       { label: 'tags',                 value: 'reservation_id_2036825' },
                   ] },
                 { label: 'Ошибки MCU',
-                  text: 'ВА — правое · В8 — заднее · В9 — левое',
-                  value: 'ВА — правое, В8 — заднее, В9 — левое' },
+                  details: [
+                      { label: 'ВА', value: 'правое' },
+                      { label: 'В8', value: 'заднее' },
+                      { label: 'В9', value: 'левое' },
+                  ] },
                 { label: 'Цифры оси Z лидара',
                   value: '0.6725999713' },
             ],
