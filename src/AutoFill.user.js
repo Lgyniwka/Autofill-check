@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Accounting Form AutoFill
 // @namespace    https://github.com/Lgyniwka/Autofill-check
-// @version      2.4
+// @version      2.5
 // @description  Плавающая панель + отправка комментария + переход статусов только для Замена QR
 // @author       You
 // @match        https://tools.sdc.yandex-team.ru/accounting-fleet-works*
@@ -171,6 +171,14 @@
                 const send = await waitForText('Отправить', 8000);
                 if (send) { clickEl(send); console.log('[AF] Нажали «Отправить»'); }
                 else { console.warn('[AF] Кнопка «Отправить» не найдена'); }
+
+                // Даём форме время уйти и сообщаем родителю, затем закрываем окно.
+                await new Promise(r => setTimeout(r, 1500));
+                try {
+                    if (window.opener) window.opener.postMessage({ type: 'AF_ORDER_DONE' }, '*');
+                } catch (e) { console.warn('[AF] Не смог уведомить родителя:', e); }
+                console.log('[AF] Заказ запчастей отправлен, закрываю окно');
+                setTimeout(() => { try { window.close(); } catch (e) {} }, 600);
             } catch (e) {
                 console.warn('[AF] Ошибка заполнения формы заказа:', e);
             }
@@ -186,6 +194,19 @@
                 runSpareOrderForm(d.payload.locationName);
             }
         });
+
+        // Сценарий «новое окно»: Self_check открывает форму в отдельной вкладке
+        // и передаёт локацию через GET-параметр st_location (надёжно, без гонок postMessage).
+        const urlLoc = new URL(location.href).searchParams.get('st_location');
+        if (urlLoc) {
+            console.log('[AF] Запуск из открытого окна, локация =', urlLoc);
+            if (formBusy) { console.warn('[AF] Форма уже заполняется, пропуск.'); }
+            else {
+                formBusy = true;
+                runSpareOrderForm(urlLoc);
+            }
+        }
+
         return; // форма заказа обработана — дальше не идём
     }
 

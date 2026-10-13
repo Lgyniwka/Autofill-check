@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ST Ticket Self-Check
 // @namespace    http://tampermonkey.net/
-// @version      5.7
+// @version      5.8
 // @description  Самопроверка + форма учёта + комментарии. Переходы/поля/резолюция — через API Stracker
 // @author       You
 // @match        https://st.yandex-team.ru/*
@@ -595,7 +595,10 @@
                             if (k === 'iframe') return; // служебный, не поле формы
                             prefill[k] = v;
                         });
-                        return { surveyId: m[1], prefill };
+                        // src без sandbox-параметров iframe — открываем в НОВОМ ОКНЕ,
+                        // где AutoFill работает как обычный userscript (не в sandbox-iframe).
+                        u.searchParams.delete('iframe');
+                        return { surveyId: m[1], prefill, openUrl: u.href };
                     }
                 } catch (e) { console.warn('[ST] Не распарсил src iframe:', e); }
             }
@@ -604,15 +607,29 @@
         return null;
     }
 
-    // Отправка формы заказа через Forms API (создаёт тикет SDCWH).
-    async function submitSparePartsForm(surveyId, fieldsMap) {
-        const r = await formsApi({
-            method: 'POST',
-            url: `${FORMS_API_BASE}/surveys/${surveyId}/form`,
-            body: fieldsMap
+    // Ждём подтверждение от AutoFill, что форма в новом окне заполнена и отправлена.
+    function waitForOrderWindow(timeoutMs = 60000) {
+        return new Promise(resolve => {
+            const t0 = Date.now();
+            const onMsg = ev => {
+                const d = ev.data || {};
+                if (d && d.type === 'AF_ORDER_DONE') {
+                    window.removeEventListener('message', onMsg);
+                    clearInterval(iv);
+                    resolve(true);
+                }
+            };
+            window.addEventListener('message', onMsg);
+            const iv = setInterval(() => {
+                if (Date.now() - t0 > timeoutMs) {
+                    window.removeEventListener('message', onMsg);
+                    clearInterval(iv);
+                    resolve(false);
+                }
+            }, 500);
         });
-        return r.data || {};
     }
+
     async function runMicrophoneOrder(locationName, locationId, issueKey) {
         if (!OAUTH_TOKEN) { showTokenModal(); return; }
         if (!issueKey) { console.warn('[ST] Тикет не определён для заказа жгута'); showToast('Не определён тикет'); return; }
@@ -639,40 +656,30 @@
             console.log('[ST] Переход «Заказать запчасти»: ' + (okOrder ? 'выполнен' : 'не найден'));
             await sleep(2000);
 
-            // 1. Ждём iframe формы и читаем из его src скрытые answer_* поля тикета (prefill).
-            //    Note: formId из src может быть псевдонимом (154795). Канонический id — SPARE_FORM.formId (13693051).
+            // 1. Ждём iframe формы и читаем из его src полный URL (без sandbox-метки)
+            //    для открытия формы в НОВОМ ОКНЕ. В новом окне AutoFill-скрипт работает
+            //    как обычный userscript и заполняет форму надёжно (DOM как на любом сайте).
             const orderData = await getOrderIframeData(30000);
             if (!orderData) { showToast('Форма заказа не появилась', 7000); return; }
-            console.log('[ST] Форма заказа: prefill', orderData.prefill);
+            console.log('[ST] Форма заказа: openUrl', orderData.openUrl);
 
-            // 2. Собираем ответ: наследуем prefill из src (привязка к тикету, серия и т.д.)
-            //    и переопределяем обязательные поля.
-            //    ВАЖНО: по документации API Яндекс.Форм enum/suggest передаются МАССИВОМ id
-            //    (пример: "id-enum": ["id-second", "id-third"]).
-            const fields = Object.assign({}, orderData.prefill);
-            fields[SPARE_FORM.fields.robotStatus] = [SPARE_FORM.enumValues.notDonor];  // «Не донор»
-            fields[SPARE_FORM.fields.isSC] = [SPARE_FORM.enumValues.no];               // «Нет»
-            fields[SPARE_FORM.fields.materialType] = [SPARE_FORM.enumValues.parts];    // «Запчасти»
-            if (locationId) fields[SPARE_FORM.fields.location] = [locationId];         // Локация (suggest id)
+            // Передаём локацию через GET-параметр st_location (без гонок postMessage).
+            const openUrl = new URL(orderData.openUrl);
+            openUrl.searchParams.set('st_location', locationName);
+            openUrl.searchParams.set('st_location_id', locationId || '');
 
-            // 3. Обязательные поля стр.2 (появляются после «Далее»): серия компоненты, Вики-позиция, количество.
-            fields[SPARE_FORM.fields.productSeries] = [SPARE_FORM.wikiSerie];          // Серия ROBOT_ELECTRIC_WIRING
-            const wiki = await formsSuggest(SPARE_FORM.fields.wikiQuestion, 'Жгут MIC Service branch');
-            if (wiki && wiki.id) fields[SPARE_FORM.fields.wikiQuestion] = [String(wiki.id)];
-            fields[SPARE_FORM.fields.qtyQuestion] = ['1'];
+            // Открываем в новом окне и ждём подтверждение AF_ORDER_DONE от AutoFill.
+            const win = window.open(openUrl.href, '_blank');
+            if (!win) { showToast('Браузер заблокировал новое окно формы', 7000); return; }
+            showToast('Форма заказа открыта в новом окне…', 4000);
 
-            // Логируем итоговый body, чтобы было видно, что реально уходит на API.
-            console.log('[ST] Body формы заказа:', JSON.stringify(fields, null, 2));
-
-            let subRes = null;
-            try {
-                subRes = await submitSparePartsForm(SPARE_FORM.formId, fields);
-                console.log('[ST] Форма заказа отправлена:', subRes);
-            } catch (e) {
-                console.warn('[ST] Ошибка отправки формы заказа:', e.status, String(e.text || '').slice(0, 500));
-                showToast('Не удалось отправить заказ запчастей', 7000);
+            const done = await waitForOrderWindow(60000);
+            if (!done) {
+                console.warn('[ST] Окно формы не подтвердило отправку (таймаут)');
+                showToast('Форма: не дождались отправки', 7000);
                 return;
             }
+            console.log('[ST] Форма заказа заполнена и отправлена в окне');
             showToast('Заказ запчастей создан', 4000);
 
             // 5. Далее статусы: «Ожидание поставки» → «Обработан» → «В работе» → «Проверка» → «Закрыт» + итоговый комментарий
