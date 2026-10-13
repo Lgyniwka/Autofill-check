@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ST Ticket Self-Check
 // @namespace    http://tampermonkey.net/
-// @version      5.3
+// @version      5.4
 // @description  Самопроверка + форма учёта + комментарии. Переходы/поля/резолюция — через API Stracker
 // @author       You
 // @match        https://st.yandex-team.ru/*
@@ -167,65 +167,6 @@
         });
         const arr = Array.isArray(r.data) ? r.data : (r.data && r.data.items) || [];
         return arr.find(x => x && x.id && x.text) || arr[0] || null;
-    }
-
-    // Отправка ответа формы заказа запчастей (создаёт тикет SDCWH)
-    async function submitSparePartsForm(fieldsMap) {
-        const r = await formsApi({
-            method: 'POST',
-            url: `${FORMS_API_BASE}/surveys/${SPARE_FORM.formId}/form`,
-            body: fieldsMap
-        });
-        return r.data || {};
-    }
-
-    // Найти iframe формы заказа (154795) в комментарии тикета и отправить в него данные о локации.
-    // AutoFill (второй @match) внутри iframe заполнит форму и нажмёт Далее/Отправить.
-    // Форма грузится асинхронно, поэтому не слать один раз, а повторять пока не получим подтверждение AF_ORDER_RECEIVED.
-    async function sendOrderToForm(locationName, timeoutMs = 30000) {
-        const srcLike = '/surveys/154795';
-        const start = Date.now();
-        while (Date.now() - start < timeoutMs) {
-            const frames = [...document.querySelectorAll('iframe[src*="' + srcLike + '"]')];
-            if (frames.length) {
-                const f = frames[frames.length - 1];
-                try {
-                    f.contentWindow.postMessage({
-                        type: 'ST_ORDER_SPARE_PARTS',
-                        payload: { locationName }
-                    }, '*');
-                    // Ждём подтверждение от AutoFill внутри iframe (до 3 сек между повторами).
-                    if (await waitForAck(3000)) {
-                        console.log('[ST] Форма заказа приняла локацию:', locationName);
-                        return true;
-                    }
-                    console.log('[ST] Iframe найден, но AutoFill ещё не ответил — повторяю…');
-                } catch (e) {
-                    console.warn('[ST] postMessage в iframe формы не прошёл:', String(e));
-                }
-            }
-            await sleep(800);
-        }
-        console.warn('[ST] iframe формы заказа 154795 не подтвердил приём за отведённое время.');
-        return false;
-    }
-
-    // Ждём сообщение AF_ORDER_RECEIVED от AutoFill (в пределах timeoutMs).
-    function waitForAck(timeoutMs = 3000) {
-        return new Promise(resolve => {
-            const onMsg = ev => {
-                const d = ev.data || {};
-                if (d && d.type === 'AF_ORDER_RECEIVED') {
-                    window.removeEventListener('message', onMsg);
-                    resolve(true);
-                }
-            };
-            window.addEventListener('message', onMsg);
-            setTimeout(() => {
-                window.removeEventListener('message', onMsg);
-                resolve(false);
-            }, timeoutMs);
-        });
     }
 
 
@@ -632,7 +573,41 @@
 
     // =====================================================
     //  Заказ запчастей жгута микрофона (SDCWH через Forms API)
+    //  Надёжный способ: НЕ лезем в DOM iframe, а читаем его src (там
+    //  surveyId + уже подставленные скрытые answer_* поля тикета)
+    //  и отправляем форму напрямую через Forms API из родителя.
     // =====================================================
+
+    // Ждём iframe формы и вытаскиваем из его src surveyId + prefill (answer_* параметры).
+    async function getOrderIframeData(timeoutMs = 30000) {
+        const start = Date.now();
+        while (Date.now() - start < timeoutMs) {
+            const frame = [...document.querySelectorAll('iframe[src*="/surveys/"]')].pop();
+            if (frame && frame.src) {
+                try {
+                    const u = new URL(frame.src);
+                    const m = u.pathname.match(/\/surveys\/(\d+)/);
+                    if (m) {
+                        const prefill = {};
+                        u.searchParams.forEach((v, k) => { if (/^answer_/.test(k)) prefill[k] = v; });
+                        return { surveyId: m[1], prefill };
+                    }
+                } catch (e) { console.warn('[ST] Не распарсил src iframe:', e); }
+            }
+            await sleep(700);
+        }
+        return null;
+    }
+
+    // Отправка формы заказа через Forms API (создаёт тикет SDCWH).
+    async function submitSparePartsForm(surveyId, fieldsMap) {
+        const r = await formsApi({
+            method: 'POST',
+            url: `${FORMS_API_BASE}/surveys/${surveyId}/form`,
+            body: fieldsMap
+        });
+        return r.data || {};
+    }
     async function runMicrophoneOrder(locationName, locationId, issueKey) {
         if (!OAUTH_TOKEN) { showTokenModal(); return; }
         if (!issueKey) { console.warn('[ST] Тикет не определён для заказа жгута'); showToast('Не определён тикет'); return; }
@@ -654,18 +629,35 @@
             console.log('[ST] Переход в «Обработан»: ' + (okTreated ? 'выполнен' : 'не найден'));
             await sleep(1500);
 
-            // 0.1 Переход «Заказать запчасти» (treated -> delieveryWaiting) открывает в комментарии iframe формы 154795
+            // 0.1 Переход «Заказать запчасти» (treated -> delieveryWaiting) открывает в комментарии iframe формы заказа
             const okOrder = await runTransition(issueKey, 'delieveryWaiting', 15000);
             console.log('[ST] Переход «Заказать запчасти»: ' + (okOrder ? 'выполнен' : 'не найден'));
             await sleep(2000);
 
-            // 1. Ждём появления iframe формы заказа (154795) и шлём в него данные о локации.
-            //    AutoFill (со вторым @match) внутри iframe заполнит форму и нажмёт Далее/Отправить.
-            const sent = await sendOrderToForm(locationName);
-            if (!sent) { showToast('Форма заказа не появилась', 7000); return; }
-            showToast('Форма заказа заполняется…', 4000);
-            // Даём время AutoFill заполнить и отправить форму
-            await sleep(8000);
+            // 1. Ждём iframe формы и читаем из его src surveyId + скрытые answer_* поля тикета.
+            //    Дальше отправляем форму напрямую через Forms API (без DOM iframe).
+            const orderData = await getOrderIframeData(30000);
+            if (!orderData) { showToast('Форма заказа не появилась', 7000); return; }
+            console.log('[ST] Форма заказа: surveyId=' + orderData.surveyId, orderData.prefill);
+
+            // 2. Собираем ответ: наследуем prefill из src (привязка к тикету, серия и т.д.)
+            //    и переопределяем обязательные поля.
+            const fields = Object.assign({}, orderData.prefill);
+            fields[SPARE_FORM.fields.robotStatus] = SPARE_FORM.enumValues.notDonor;   // «Не донор»
+            fields[SPARE_FORM.fields.isSC] = SPARE_FORM.enumValues.no;                // «Нет»
+            fields[SPARE_FORM.fields.materialType] = SPARE_FORM.enumValues.parts;     // «Запчасти»
+            if (locationId) fields[SPARE_FORM.fields.location] = locationId;          // Локация (suggest id)
+
+            let subRes = null;
+            try {
+                subRes = await submitSparePartsForm(orderData.surveyId, fields);
+                console.log('[ST] Форма заказа отправлена:', subRes);
+            } catch (e) {
+                console.warn('[ST] Ошибка отправки формы заказа:', e.status, String(e.text || '').slice(0, 500));
+                showToast('Не удалось отправить заказ запчастей', 7000);
+                return;
+            }
+            showToast('Заказ запчастей создан', 4000);
 
             // 5. Далее статусы: «Ожидание поставки» → «Обработан» → «В работе» → «Проверка» → «Закрыт» + итоговый комментарий
             await sleep(1500);
