@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Accounting Form AutoFill
 // @namespace    https://github.com/Lgyniwka/Autofill-check
-// @version      2.12
+// @version      2.13
 // @description  Плавающая панель + отправка комментария + переход статусов только для Замена QR
 // @author       You
 // @match        https://tools.sdc.yandex-team.ru/accounting-fleet-works*
@@ -113,14 +113,20 @@
                         try { target.dispatchEvent(new MouseEvent('mouseup', ev)); } catch (e) {}
                         try { target.dispatchEvent(new MouseEvent('click', ev)); } catch (e) {}
                         setTimeout(() => {
-                            const inp = document.getElementById(input.id);
-                            if (inp) {
-                                inp.focus();
+                            // Проверяем, применился ли выбор (чипс появился в поле).
+                            // Только если НЕ применился — жмём Enter (иначе в
+                            // multichoice-саджесте Enter добавит ЛИШНЮЮ серию).
+                            const inpNow = document.getElementById(input.id);
+                            const holder = (inpNow && inpNow.closest('.Question')) || document;
+                            const applied = norm(holder.textContent || '').includes(norm(value));
+                            if (!applied && inpNow) {
+                                console.warn('[AF] Клик по опции саджеста не применился — Enter');
+                                inpNow.focus();
                                 ['keydown', 'keypress', 'keyup'].forEach(t =>
-                                    inp.dispatchEvent(new KeyboardEvent(t, { key: 'Enter', code: 'Enter', keyCode: 13, which: 13, bubbles: true })));
+                                    inpNow.dispatchEvent(new KeyboardEvent(t, { key: 'Enter', code: 'Enter', keyCode: 13, which: 13, bubbles: true })));
                             }
                             resolve(true);
-                        }, 350);
+                        }, 400);
                     }
                     else if (Date.now() - t0 > 7000) { clearInterval(iv); resolve(false); }
                 }, 300);
