@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Accounting Form AutoFill
 // @namespace    https://github.com/Lgyniwka/Autofill-check
-// @version      2.16
+// @version      2.17
 // @description  Плавающая панель + отправка комментария + переход статусов только для Замена QR
 // @author       You
 // @match        https://tools.sdc.yandex-team.ru/accounting-fleet-works*
@@ -176,15 +176,15 @@
                 seriesQuery: 'robot_electric_wiring', seriesChip: 'ROBOT_ELECTRIC_WIRING',
                 wikiText: 'Жгут MIC Service branch', qty: '1'
             },
+            // Замена коннекторов АКБ: заказ — переходник Battery extender ×2
             battery: {
                 seriesQuery: 'robot_electric_wiring', seriesChip: 'ROBOT_ELECTRIC_WIRING',
-                wikiText: '3.9 Battery Harness', qty: '2'
+                wikiText: '3.9 Переходник для АКБ 1.5 Battery extender', qty: '2'
             },
-            // Жгут АКБ + КОНнектор: то же + вторая позиция ряда по кнопке «Ещё»
+            // Жгут АКБ + КОНнектор: жгут меняется ТОЛЬКО ОДИН — Battery Harness ×1
             batteryCon: {
                 seriesQuery: 'robot_electric_wiring', seriesChip: 'ROBOT_ELECTRIC_WIRING',
-                wikiText: '3.9 Battery Harness', qty: '2',
-                extraRow: { wikiText: '3.9 Переходник для АКБ 1.5 Battery extender', qty: '2' }
+                wikiText: '3.9 Battery Harness', qty: '1'
             }
         };
 
@@ -347,7 +347,7 @@
             <button class="acp-btn" data-action="stickers">Замена QR</button>
             <button class="acp-btn" data-action="ppr">ППР робота</button>
             <button class="acp-btn" data-action="microphone">Установка жгута микрофонов</button>
-            <button class="acp-btn" data-action="battery">Замена жгута АКБ без кон.</button>
+            <button class="acp-btn" data-action="battery">Замена коннекторов АКБ</button>
             <button class="acp-btn" data-action="batteryCon">Замена жгута АКБ + КОН.</button>
         </div>
     `;
