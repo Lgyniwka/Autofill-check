@@ -348,7 +348,12 @@
                     } else {
                         const ph = await fillPhoto(photo);
                         if (!ph.ok) {
-                            report('Предупреждение: фото ' + (ph.why === 'nostore' ? 'не передано с тикета' : 'не принято формой') + '. Добавь вручную.', 'error');
+                            report('Фото не подставилось автоматически — добавь ВРУЧНУЮ и подожди, продолжу сам…', 'error');
+                            // Ждём ручной добавки фото до 3 минут, затем продолжаем сами.
+                            const t0 = Date.now();
+                            while (!photoBadgeExists() && Date.now() - t0 < 180000) await sleep(1000);
+                            if (photoBadgeExists()) report('Фото добавлено вручную — продолжаю', 'done');
+                            else report('Фото так и не добавлено (3 мин) — продолжаю без него', 'error');
                         }
                     }
 
