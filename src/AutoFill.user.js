@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Accounting Form AutoFill
 // @namespace    https://github.com/Lgyniwka/Autofill-check
-// @version      2.15
+// @version      2.16
 // @description  Плавающая панель + отправка комментария + переход статусов только для Замена QR
 // @author       You
 // @match        https://tools.sdc.yandex-team.ru/accounting-fleet-works*
@@ -144,18 +144,21 @@
                 }, 300);
             });
         }
-        // Найти suggest-инпут по тексту вопроса (label), чтобы не спутать с полем локации.
-        function findInputByQuestionLabel(textPart, timeout = 8000) {
+        // Найти suggest-инпут по тексту вопроса (label). takeLast — брать ПОСЛЕДНИЙ
+        // найденный (у второго ряда серии id полей дублируются).
+        function findInputByQuestionLabel(textPart, timeout = 8000, takeLast = false) {
             return new Promise(resolve => {
                 const scan = () => {
+                    const found = [];
                     for (const q of document.querySelectorAll('.Question')) {
                         const lbl = q.querySelector('.QuestionLabel, h3, .QuestionLayout-Label');
                         if (lbl && (lbl.textContent || '').toLowerCase().includes(String(textPart).toLowerCase())) {
                             const input = q.querySelector('input[role="combobox"], input[aria-label*="Для поиска"], input.g-text-input__control');
-                            if (input) return input;
+                            if (input) found.push(input);
                         }
                     }
-                    return null;
+                    if (!found.length) return null;
+                    return takeLast ? found[found.length - 1] : found[0];
                 };
                 const el = scan();
                 if (el) return resolve(el);
@@ -176,15 +179,22 @@
             battery: {
                 seriesQuery: 'robot_electric_wiring', seriesChip: 'ROBOT_ELECTRIC_WIRING',
                 wikiText: '3.9 Battery Harness', qty: '2'
+            },
+            // Жгут АКБ + КОНнектор: то же + вторая позиция ряда по кнопке «Ещё»
+            batteryCon: {
+                seriesQuery: 'robot_electric_wiring', seriesChip: 'ROBOT_ELECTRIC_WIRING',
+                wikiText: '3.9 Battery Harness', qty: '2',
+                extraRow: { wikiText: '3.9 Переходник для АКБ 1.5 Battery extender', qty: '2' }
             }
         };
 
-        async function setQuantity(value) {
+        async function setQuantity(value, takeLast = false) {
             const t0 = Date.now();
             return new Promise(resolve => {
                 const iv = setInterval(() => {
-                    const q = [...document.querySelectorAll('input[type="number"], input[inputmode="numeric"], input.g-text-input__control')]
-                        .find(el => el.closest('.Question') && /количеств/i.test(el.closest('.Question').textContent));
+                    const all = [...document.querySelectorAll('input[type="number"], input[inputmode="numeric"], input.g-text-input__control')]
+                        .filter(el => el.closest('.Question') && /количеств/i.test(el.closest('.Question').textContent));
+                    const q = takeLast ? all[all.length - 1] : all[0];
                     if (q) {
                         clearInterval(iv);
                         setValue(q, value);
@@ -253,6 +263,31 @@
                 await new Promise(r => setTimeout(r, 400));
                 await setQuantity(preset.qty);
 
+                // Вторая позиция ряда (пресет «+ КОН»): кнопка «Ещё» → новый ряд
+                // (id полей дублируются — берём ПОСЛЕДНИЕ Вики и Количество).
+                if (preset.extraRow) {
+                    await new Promise(r => setTimeout(r, 500));
+                    const moreBtn = await waitForText('Ещё', 5000);
+                    if (moreBtn) {
+                        clickEl(moreBtn);
+                        console.log('[AF] Нажали «Ещё» — добавлен второй ряд');
+                        await new Promise(r => setTimeout(r, 1000));
+                        const wiki2 = await findInputByQuestionLabel('Вики', 8000, true);
+                        if (wiki2) {
+                            const p2 = await pickSuggest(wiki2, preset.extraRow.wikiText);
+                            console.log('[AF] Вторая Вики:', p2, preset.extraRow.wikiText);
+                        } else { console.warn('[AF] Второе поле «Вики» не найдено'); }
+                        await new Promise(r => setTimeout(r, 400));
+                        await setQuantity(preset.extraRow.qty, true);
+                        // После второй позиции — «Далее» (если есть), затем «Отправить».
+                        await new Promise(r => setTimeout(r, 500));
+                        const next2 = await waitForText('Далее', 3000);
+                        if (next2) { clickEl(next2); console.log('[AF] Нажали «Далее»'); await new Promise(r => setTimeout(r, 1000)); }
+                    } else {
+                        console.warn('[AF] Кнопка «Ещё» не найдена — остаёмся с одной позицией');
+                    }
+                }
+
                 await new Promise(r => setTimeout(r, 400));
                 const send = await waitForText('Отправить', 8000);
                 if (send) { clickEl(send); console.log('[AF] Нажали «Отправить»'); }
@@ -313,6 +348,7 @@
             <button class="acp-btn" data-action="ppr">ППР робота</button>
             <button class="acp-btn" data-action="microphone">Установка жгута микрофонов</button>
             <button class="acp-btn" data-action="battery">Замена жгута АКБ без кон.</button>
+            <button class="acp-btn" data-action="batteryCon">Замена жгута АКБ + КОН.</button>
         </div>
     `;
 
@@ -597,6 +633,21 @@
                             locationName,
                             locationId,
                             preset: 'battery'
+                        }
+                    }, '*');
+                });
+            });
+        }
+        if (action === 'batteryCon') {
+            // Замена жгута АКБ + коннектор: в заказе ДВЕ позиции (жгут + переходник)
+            showLocationModal((locationName, locationId) => {
+                doAction(btn, 'замена жгута АКБ', 'R3.9 Замена жгута АКБ', 'Заменили жгуты АКБ', action, () => {
+                    window.parent.postMessage({
+                        type: 'ST_HELPER_MICROPHONE_ORDER',
+                        payload: {
+                            locationName,
+                            locationId,
+                            preset: 'batteryCon'
                         }
                     }, '*');
                 });
