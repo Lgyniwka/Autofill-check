@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Accounting Form AutoFill
 // @namespace    https://github.com/Lgyniwka/Autofill-check
-// @version      2.13
+// @version      2.14
 // @description  Плавающая панель + отправка комментария + переход статусов только для Замена QR
 // @author       You
 // @match        https://tools.sdc.yandex-team.ru/accounting-fleet-works*
@@ -174,7 +174,7 @@
                 wikiText: 'Жгут MIC Service branch', qty: '1'
             },
             battery: {
-                seriesQuery: 'robot_battery', seriesChip: 'ROBOT_BATTERY',
+                seriesQuery: 'robot_electric_wiring', seriesChip: 'ROBOT_ELECTRIC_WIRING',
                 wikiText: '3.9 Battery Harness', qty: '2'
             }
         };
