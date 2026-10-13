@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         QuickBase: Панель базы знаний (все сайты)
 // @namespace    https://github.com/Lgyniwka/Autofill-check/blob/main/src/QuickBase.user.js
-// @version      0.3.1
-// @description  Плавающая кнопка-ровер (правый нижний угол) открывает панель базы знаний на любом сайте. Запасной вход: Cmd+Shift+Ё/Ctrl+~. Схема данных — в DATA ниже.
+// @version      0.4.0
+// @description  Плавающая перетаскиваемая кнопка-ровер открывает панель базы знаний на любом сайте. Иконка — встроенный SVG (не протухает). Запасной вход: Cmd+Shift+Ё/Ctrl+~.
 // @homepageURL  https://github.com/Lgyniwka/Autofill-check/blob/main/src/QuickBase.user.js
 // @supportURL   https://github.com/Lgyniwka/Autofill-check/blob/main/src/QuickBase.user.js
 // @updateURL    https://raw.githubusercontent.com/Lgyniwka/Autofill-check/main/src/QuickBase.user.js
@@ -116,51 +116,128 @@
     }
 
     /* ==================================================================
-     *  ПЛАВАЮЩАЯ КНОПКА-РОВЕР (правый нижний угол, клик — панель)
-     *  QB_ICON_URL: вставь сюда прямой URL картинки ровера (текстом),
-     *  пусто — используется встроенный SVG.
-     *  ПКМ по кнопке — скрыть на этой вкладке до перезагрузки.
+     *  ПЛАВАЮЩАЯ КНОПКА-РОВЕР (перетаскивается, клик — панель)
+     *  Иконка — встроенный SVG (без внешних ссылок, не протухает).
+     *  QB_ICON_URL — опционально: свой URL картинки, пусто = SVG.
+     *  ЛКМ-клик — открыть панель · перетаскивание — двигать (запоминается)
+     *  ПКМ — скрыть на этой вкладке до перезагрузки.
      * ================================================================== */
 
-    const QB_ICON_URL = 'https://avatars.mds.yandex.net/i?id=9e3268fc66a050716037551f084418f9_l-7716430-images-thumbs&n=13';
+    const QB_ICON_URL = '';
 
+    // Ровер Яндекса, вид сбоку: серый корпус, жёлтый бренд, лидар, 3 колеса, фара
     const QB_SVG = `
-        <svg viewBox="0 0 64 64" width="30" height="30" aria-hidden="true">
+        <svg viewBox="0 0 64 64" width="36" height="36" aria-hidden="true">
+            <!-- лидар на крыше -->
+            <rect x="27" y="8"  width="10" height="5" rx="1.5" fill="#2b2f3a"/>
+            <rect x="25" y="12" width="14" height="3" rx="1.5" fill="#3a3f4a"/>
             <!-- корпус -->
-            <rect x="10" y="18" width="44" height="22" rx="6"
-                  fill="#ffcc00" stroke="#333" stroke-width="2"/>
-            <!-- «башня» с сенсором -->
-            <rect x="24" y="10" width="16" height="8" rx="3"
-                  fill="#333"/>
-            <circle cx="50" cy="24" r="4" fill="#333"/>
-            <!-- колёса -->
-            <circle cx="18" cy="46" r="7"  fill="#222" stroke="#111" stroke-width="2"/>
-            <circle cx="46" cy="46" r="7"  fill="#222" stroke="#111" stroke-width="2"/>
-            <circle cx="18" cy="46" r="2.5" fill="#555"/>
-            <circle cx="46" cy="46" r="2.5" fill="#555"/>
-            <!-- «глаза» -->
-            <circle cx="22" cy="26" r="2.5" fill="#333"/>
-            <circle cx="34" cy="26" r="2.5" fill="#333"/>
-            <!-- синяя полоса Яндекс -->
-            <rect x="10" y="33" width="44" height="4" fill="#fc3f1d" opacity="0.85"/>
+            <rect x="6"  y="14" width="52" height="26" rx="9"
+                  fill="#eef0f4" stroke="#2b2f3a" stroke-width="2.5"/>
+            <!-- шов крышки корпуса -->
+            <line x1="10" y1="22" x2="54" y2="22" stroke="#c6cbd6" stroke-width="2"/>
+            <!-- жёлтая брендовая полоса -->
+            <rect x="6" y="31" width="52" height="6" fill="#ffcc00"/>
+            <!-- решётка вентиляции -->
+            <rect x="12" y="25" width="16" height="4" rx="2" fill="#d7dbe2"/>
+            <!-- фара спереди -->
+            <circle cx="52" cy="27" r="2.6" fill="#2b2f3a"/>
+            <circle cx="52" cy="27" r="1.1" fill="#9fd8ff"/>
+            <!-- сенсор-«глаз» у переднего края -->
+            <rect x="46" y="25" width="3" height="4" rx="1" fill="#2b2f3a"/>
+            <!-- колёса: три по борту -->
+            <rect x="12" y="39" width="8"  height="4" fill="#2b2f3a" rx="1"/>
+            <rect x="28" y="39" width="8"  height="4" fill="#2b2f3a" rx="1"/>
+            <rect x="44" y="39" width="8"  height="4" fill="#2b2f3a" rx="1"/>
+            <circle cx="16" cy="46" r="5"   fill="#22252e" stroke="#111" stroke-width="1.5"/>
+            <circle cx="32" cy="46" r="5"   fill="#22252e" stroke="#111" stroke-width="1.5"/>
+            <circle cx="48" cy="46" r="5"   fill="#22252e" stroke="#111" stroke-width="1.5"/>
+            <circle cx="16" cy="46" r="1.7" fill="#6b7280"/>
+            <circle cx="32" cy="46" r="1.7" fill="#6b7280"/>
+            <circle cx="48" cy="46" r="1.7" fill="#6b7280"/>
         </svg>`;
+
+    const BTN_POS_KEY = 'qb_btn_pos';
+
+    function btnLoadPos() {
+        const vw = window.innerWidth, vh = window.innerHeight;
+        try {
+            const p = JSON.parse(localStorage.getItem(BTN_POS_KEY));
+            if (p && typeof p.x === 'number' && typeof p.y === 'number') {
+                return clampPos(p, vw, vh);
+            }
+        } catch (e) { /* ignore */ }
+        return { x: vw - 66, y: vh - 66 }; // правый нижний угол по умолчанию
+    }
+
+    function clampPos(p, vw, vh) {
+        const S = 48; // размер кнопки
+        return {
+            x: Math.min(Math.max(p.x, 8), Math.max(vw - S - 8, 8)),
+            y: Math.min(Math.max(p.y, 8), Math.max(vh - S - 8, 8)),
+        };
+    }
+
+    function btnApplyPos(btn, p) {
+        btn.style.left = p.x + 'px';
+        btn.style.top = p.y + 'px';
+        btn.style.right = 'auto';
+        btn.style.bottom = 'auto';
+    }
 
     function createFloatButton() {
         if (sessionStorage.getItem('qb_btn_hidden') === '1') return;
 
         const btn = document.createElement('div');
         btn.id = 'quickbase_btn';
-        btn.title = 'QuickBase — база знаний (клик — открыть, ПКМ — скрыть)';
+        btn.title = 'QuickBase — база знаний (клик — открыть, тащить — переместить, ПКМ — скрыть)';
 
         btn.innerHTML = QB_ICON_URL
             ? `<img src="${QB_ICON_URL}" alt="rover" width="34" height="34">`
             : QB_SVG;
 
-        btn.addEventListener('click', (e) => {
+        let pos = btnLoadPos();
+        btnApplyPos(btn, pos);
+
+        // --- Перетаскивание (pointer events: мышь + тач) с отличием от клика ---
+        let drag = null;
+
+        btn.addEventListener('pointerdown', (e) => {
+            if (e.button !== 0) return;
+            drag = { startX: e.clientX, startY: e.clientY, moved: false };
+            btn.setPointerCapture(e.pointerId);
             e.preventDefault();
-            e.stopPropagation();
-            togglePanel();
         });
+
+        btn.addEventListener('pointermove', (e) => {
+            if (!drag) return;
+            const dx = e.clientX - drag.startX;
+            const dy = e.clientY - drag.startY;
+            if (!drag.moved && (Math.abs(dx) > 5 || Math.abs(dy) > 5)) {
+                drag.moved = true;
+                drag.origX = pos.x;
+                drag.origY = pos.y;
+                btn.classList.add('qb_dragging');
+            }
+            if (drag.moved) {
+                pos = clampPos({ x: drag.origX + dx, y: drag.origY + dy },
+                               window.innerWidth, window.innerHeight);
+                btnApplyPos(btn, pos);
+            }
+        });
+
+        const endDrag = (e) => {
+            if (!drag) return;
+            if (drag.moved) {
+                try { localStorage.setItem(BTN_POS_KEY, JSON.stringify(pos)); } catch (err) { /* ignore */ }
+                btn.classList.remove('qb_dragging');
+            } else {
+                togglePanel(); // это был клик, не драг
+            }
+            drag = null;
+        };
+        btn.addEventListener('pointerup', endDrag);
+        btn.addEventListener('pointercancel', endDrag);
 
         btn.addEventListener('contextmenu', (e) => {
             e.preventDefault();
@@ -173,8 +250,6 @@
         style.textContent = `
             #quickbase_btn {
                 position: fixed !important;
-                right: 18px  !important;
-                bottom: 18px !important;
                 width: 48px; height: 48px;
                 border-radius: 50%;
                 background: rgba(22, 26, 35, 0.92);
@@ -183,15 +258,18 @@
                 display: flex !important;
                 align-items: center;
                 justify-content: center;
-                align-items: center;
-                cursor: pointer;
+                cursor: grab;
+                touch-action: none;
                 z-index: ${PANEL_Z - 1} !important;
-                opacity: 0.55;
+                opacity: 0.6;
                 transition: opacity .15s, transform .15s;
             }
-            #quickbase_btn:hover {
+            #quickbase_btn:hover { opacity: 1; transform: scale(1.08); }
+            #quickbase_btn.qb_dragging {
+                cursor: grabbing;
                 opacity: 1;
-                transform: scale(1.08);
+                transform: none;
+                box-shadow: 0 8px 24px rgba(0,0,0,.6);
             }
             #quickbase_btn, #quickbase_btn * {
                 pointer-events: none;
@@ -199,10 +277,7 @@
                 -webkit-user-select: none;
             }
             #quickbase_btn { pointer-events: auto; }
-            #quickbase_btn img {
-                border-radius: 8px;
-                object-fit: cover;
-            }
+            #quickbase_btn img { border-radius: 8px; object-fit: cover; }
         `;
         document.documentElement.appendChild(style);
         document.documentElement.appendChild(btn);
