@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ST Ticket Self-Check
 // @namespace    http://tampermonkey.net/
-// @version      5.15
+// @version      5.16
 // @description  Самопроверка + форма учёта + комментарии. Переходы/поля/резолюция — через API Stracker
 // @author       You
 // @match        https://st.yandex-team.ru/*
@@ -221,9 +221,9 @@
     }
 
 
-    // Итоговый комментарий через API (с подписью Платона)
+    // Итоговый комментарий через API
     async function sendPostComment(issueKey, text) {
-        const body = text + '\n\n---\nПлатон🧑🏽‍✈️';
+        const body = text;
         try {
             await apiRequest('POST', `https://st-api.yandex-team.ru/v3/issues/${issueKey}/comments`, { text: body });
             console.log('[ST] Итоговый комментарий отправлен:', text);
@@ -841,7 +841,7 @@
         // 3. Комментарий «Проверили калибровки»
         try {
             await apiRequest('POST', `https://st-api.yandex-team.ru/v2/issues/${calibKey}/comments`,
-                { text: PPR_CALIB.COMMENT + '\n\n---\nПлатон🧑🏽‍✈️' });
+                { text: PPR_CALIB.COMMENT });
         } catch (e) {}
 
         // 4. Проверка (validation)
