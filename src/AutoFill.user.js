@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Accounting Form AutoFill
 // @namespace    https://github.com/Lgyniwka/Autofill-check
-// @version      2.20
+// @version      2.21
 // @description  Плавающая панель + отправка комментария + переход статусов только для Замена QR
 // @author       You
 // @match        https://tools.sdc.yandex-team.ru/accounting-fleet-works*
@@ -632,6 +632,8 @@
         if (!btn) return;
 
         const action = btn.dataset.action;
+        // Метка нажатия кнопки — для таймера в итоговом уведомлении
+        const pressTs = Date.now();
 
         if (action === 'stickers') {
             doAction(btn, 'Замена наклеек', 'Замена наклеек', 'Наклеили новый QR', action);
@@ -648,14 +650,15 @@
                         payload: {
                             locationName,
                             locationId,
-                            preset: 'mic'
+                            preset: 'mic',
+                            startedAt: pressTs
                         }
                     }, '*');
                 });
             });
         }
         if (action === 'battery') {
-            // Замена жгута АКБ (без коннектора): та же схема, пресет battery
+            // Замена коннекторов АКБ: та же схема, пресет battery
             showLocationModal((locationName, locationId) => {
                 doAction(btn, 'замена жгута АКБ', 'R3.9 Замена жгута АКБ', 'Заменили жгуты АКБ', action, () => {
                     window.parent.postMessage({
@@ -663,7 +666,8 @@
                         payload: {
                             locationName,
                             locationId,
-                            preset: 'battery'
+                            preset: 'battery',
+                            startedAt: pressTs
                         }
                     }, '*');
                 });
@@ -678,7 +682,8 @@
                         payload: {
                             locationName,
                             locationId,
-                            preset: 'batteryCon'
+                            preset: 'batteryCon',
+                            startedAt: pressTs
                         }
                     }, '*');
                 });

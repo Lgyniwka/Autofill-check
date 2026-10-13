@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ST Ticket Self-Check
 // @namespace    http://tampermonkey.net/
-// @version      5.12
+// @version      5.13
 // @description  Самопроверка + форма учёта + комментарии. Переходы/поля/резолюция — через API Stracker
 // @author       You
 // @match        https://st.yandex-team.ru/*
@@ -637,7 +637,8 @@
         batteryCon: 'Замена жгута АКБ + КОН.'
     };
 
-    async function runMicrophoneOrder(locationName, locationId, issueKey, preset) {
+    async function runMicrophoneOrder(locationName, locationId, issueKey, preset, startedAt) {
+        startedAt = startedAt || Date.now();
         preset = preset || 'mic';
         const presetLabel = PRESET_LABELS[preset] || preset;
         if (!OAUTH_TOKEN) { showTokenModal(); return; }
@@ -700,7 +701,8 @@
             await runTransition(issueKey, 'check');
             await setDefectCodeApi(issueKey, '0');
             await runTransition(issueKey, ['closed', 'closedMeta'], 10000, { resolution: 'fixed' });
-            showToast(presetLabel + ': готово', 7000);
+            const elapsedSec = ((Date.now() - startedAt) / 1000).toFixed(1);
+            showToast(presetLabel + ': закрыт за ' + elapsedSec + ' сек', 7000);
         } catch (e) {
             console.warn('[ST] Ошибка заказа запчастей:', e.status, String(e.text || '').slice(0, 500));
             showToast('Не удалось создать заказ запчастей: ' + String(e.status || 'err'), 7000);
@@ -781,7 +783,7 @@
         if (event.data.type === 'ST_HELPER_MICROPHONE_ORDER') {
             await sleep(1000);
             const p = (event.data.payload || {});
-            await runMicrophoneOrder(p.locationName, p.locationId, getTicketKey(), p.preset);
+            await runMicrophoneOrder(p.locationName, p.locationId, getTicketKey(), p.preset, p.startedAt);
         }
     });
 
