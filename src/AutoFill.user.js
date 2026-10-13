@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Accounting Form AutoFill
 // @namespace    https://github.com/Lgyniwka/Autofill-check
-// @version      2.9
+// @version      2.10
 // @description  Плавающая панель + отправка комментария + переход статусов только для Замена QR
 // @author       You
 // @match        https://tools.sdc.yandex-team.ru/accounting-fleet-works*
@@ -88,7 +88,8 @@
             });
         }
         // Suggest: вставляем текст (execCommand триггерит реактовский саджест),
-        // ждём выпадающий список и кликаем по нему (mousedown+mouseup+click).
+        // ждём попап popup-<id поля> (YC-формы: div[role=option].g-list__item),
+        // кликаем опцию полной серией событий с координатами; fallback — Enter.
         async function pickSuggest(input, value) {
             if (!input || !value) return false;
             setValue(input, value);
@@ -96,15 +97,30 @@
             const t0 = Date.now();
             return new Promise(resolve => {
                 const iv = setInterval(() => {
-                    const opts = [...document.querySelectorAll('[role="option"], li[role="option"], div[role="option"], [class*="Suggest"] li, [class*="suggest"] [class*="item"]')]
-                        .filter(o => o.offsetParent !== null);
-                    const target = opts.find(o => norm(o.textContent).includes(norm(value)));
+                    const popup = document.getElementById('popup-' + input.id);
+                    const opts = popup
+                        ? [...popup.querySelectorAll('[role="option"]')]
+                        : [...document.querySelectorAll('[role="option"]')].filter(o => o.offsetParent !== null);
+                    const target = opts.find(o => norm(o.textContent) === norm(value))
+                        || opts.find(o => norm(o.textContent).includes(norm(value)));
                     if (target) {
                         clearInterval(iv);
-                        const clickable = target.closest('[role="option"], li') || target;
-                        ['mousedown', 'mouseup', 'click'].forEach(t =>
-                            clickable.dispatchEvent(new MouseEvent(t, { bubbles: true })));
-                        setTimeout(() => resolve(true), 250);
+                        const r = target.getBoundingClientRect();
+                        const ev = { bubbles: true, cancelable: true, button: 0, clientX: r.left + r.width / 2, clientY: r.top + r.height / 2 };
+                        try { target.dispatchEvent(new PointerEvent('pointerdown', ev)); } catch (e) {}
+                        try { target.dispatchEvent(new MouseEvent('mousedown', ev)); } catch (e) {}
+                        try { target.dispatchEvent(new PointerEvent('pointerup', ev)); } catch (e) {}
+                        try { target.dispatchEvent(new MouseEvent('mouseup', ev)); } catch (e) {}
+                        try { target.dispatchEvent(new MouseEvent('click', ev)); } catch (e) {}
+                        setTimeout(() => {
+                            const inp = document.getElementById(input.id);
+                            if (inp) {
+                                inp.focus();
+                                ['keydown', 'keypress', 'keyup'].forEach(t =>
+                                    inp.dispatchEvent(new KeyboardEvent(t, { key: 'Enter', code: 'Enter', keyCode: 13, which: 13, bubbles: true })));
+                            }
+                            resolve(true);
+                        }, 350);
                     }
                     else if (Date.now() - t0 > 7000) { clearInterval(iv); resolve(false); }
                 }, 300);
