@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ST Ticket Self-Check
 // @namespace    http://tampermonkey.net/
-// @version      5.5
+// @version      5.6
 // @description  Самопроверка + форма учёта + комментарии. Переходы/поля/резолюция — через API Stracker
 // @author       You
 // @match        https://st.yandex-team.ru/*
@@ -647,11 +647,16 @@
 
             // 2. Собираем ответ: наследуем prefill из src (привязка к тикету, серия и т.д.)
             //    и переопределяем обязательные поля.
+            //    ВАЖНО: по документации API Яндекс.Форм enum/suggest передаются МАССИВОМ id,
+            //    (пример: "id-enum": ["id-second", "id-third"]).
             const fields = Object.assign({}, orderData.prefill);
-            fields[SPARE_FORM.fields.robotStatus] = SPARE_FORM.enumValues.notDonor;   // «Не донор»
-            fields[SPARE_FORM.fields.isSC] = SPARE_FORM.enumValues.no;                // «Нет»
-            fields[SPARE_FORM.fields.materialType] = SPARE_FORM.enumValues.parts;     // «Запчасти»
-            if (locationId) fields[SPARE_FORM.fields.location] = locationId;          // Локация (suggest id)
+            fields[SPARE_FORM.fields.robotStatus] = [SPARE_FORM.enumValues.notDonor];  // «Не донор»
+            fields[SPARE_FORM.fields.isSC] = [SPARE_FORM.enumValues.no];               // «Нет»
+            fields[SPARE_FORM.fields.materialType] = [SPARE_FORM.enumValues.parts];    // «Запчасти»
+            if (locationId) fields[SPARE_FORM.fields.location] = [locationId];         // Локация (suggest id)
+
+            // Логируем итоговый body, чтобы было видно, что реально уходит на API.
+            console.log('[ST] Body формы заказа:', JSON.stringify(fields, null, 2));
 
             let subRes = null;
             try {
