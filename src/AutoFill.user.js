@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Accounting Form AutoFill
 // @namespace    https://github.com/Lgyniwka/Autofill-check
-// @version      2.8
+// @version      2.9
 // @description  Плавающая панель + отправка комментария + переход статусов только для Замена QR
 // @author       You
 // @match        https://tools.sdc.yandex-team.ru/accounting-fleet-works*
@@ -53,14 +53,27 @@
         function clickEl(el) { if (el) el.click(); }
         function setValue(input, value) {
             input.focus();
-            try {
-                const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set;
-                setter.call(input, value);
-            } catch (e) {}
-            input.value = value;
-            input.dispatchEvent(new Event('focus', { bubbles: true }));
-            input.dispatchEvent(new InputEvent('input', { bubbles: true, data: value, inputType: 'insertText' }));
+            try { input.select(); } catch (e) {}
+            let ok = false;
+            try { ok = document.execCommand('insertText', false, value); } catch (e) {}
+            if (!ok || input.value !== value) {
+                try {
+                    const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set;
+                    setter.call(input, value);
+                } catch (e) { input.value = value; }
+                input.dispatchEvent(new Event('input', { bubbles: true }));
+            }
             input.dispatchEvent(new Event('change', { bubbles: true }));
+        }
+        // Надёжный клик по radio: напрямую по name+value (id опций известны).
+        function pickRadioByName(name, value, label) {
+            const el = document.querySelector(`input[name="${name}"][value="${value}"]`);
+            if (!el) return false;
+            el.click();
+            el.checked = true;
+            el.dispatchEvent(new Event('change', { bubbles: true }));
+            console.log('[AF] Радио «' + (label || value) + '»: клик по id');
+            return true;
         }
         // Выбрать опцию/режим по подстроке текста (для радио и саджестов).
         async function pickOption(labelContains) {
@@ -74,16 +87,26 @@
                 }, 300);
             });
         }
+        // Suggest: вставляем текст (execCommand триггерит реактовский саджест),
+        // ждём выпадающий список и кликаем по нему (mousedown+mouseup+click).
         async function pickSuggest(input, value) {
             if (!input || !value) return false;
             setValue(input, value);
+            const norm = s => (s || '').trim().toLowerCase();
+            const t0 = Date.now();
             return new Promise(resolve => {
-                const t0 = Date.now();
                 const iv = setInterval(() => {
-                    const opts = [...document.querySelectorAll('[role="option"], li[role="option"], div[role="option"]')];
-                    const target = opts.find(o => (o.textContent || '').trim().toLowerCase().includes(String(value).toLowerCase()));
-                    if (target) { clearInterval(iv); target.click(); resolve(true); }
-                    else if (Date.now() - t0 > 6000) { clearInterval(iv); resolve(false); }
+                    const opts = [...document.querySelectorAll('[role="option"], li[role="option"], div[role="option"], [class*="Suggest"] li, [class*="suggest"] [class*="item"]')]
+                        .filter(o => o.offsetParent !== null);
+                    const target = opts.find(o => norm(o.textContent).includes(norm(value)));
+                    if (target) {
+                        clearInterval(iv);
+                        const clickable = target.closest('[role="option"], li') || target;
+                        ['mousedown', 'mouseup', 'click'].forEach(t =>
+                            clickable.dispatchEvent(new MouseEvent(t, { bubbles: true })));
+                        setTimeout(() => resolve(true), 250);
+                    }
+                    else if (Date.now() - t0 > 7000) { clearInterval(iv); resolve(false); }
                 }, 300);
             });
         }
@@ -146,28 +169,42 @@
                 if (!locInput) { console.warn('[AF] Поле локации не найдено'); return; }
                 const locPicked = await pickSuggest(locInput, locationName);
                 console.log('[AF] Локация:', locPicked);
-                await new Promise(r => setTimeout(r, 500));
-
-                await pickOption('Не донор');   // Статус робота
-                await new Promise(r => setTimeout(r, 300));
-                await pickOption('Нет');        // Это СК?
-                await new Promise(r => setTimeout(r, 300));
-                await pickOption('Запчасти');   // Тип ТМЦ
                 await new Promise(r => setTimeout(r, 600));
 
-                // «Серия компонент» появляется на стр.1 после выбора «Запчасти»
-                // (id=answer_wiki_9008976633551088). Вводим префикс серии и выбираем
-                // опцию ROBOT_ELECTRIC_WIRING — только после этого «Далее» откроет
-                // страницу с Вики и Количеством.
+                // Радио — напрямую по name+value (id опций выверены), fallback по тексту
+                if (!pickRadioByName('answer_one_answer_9008988226731508', '1788972002689', 'Не донор'))
+                    await pickOption('Не донор');
+                await new Promise(r => setTimeout(r, 300));
+                if (!pickRadioByName('answer_one_answer_9008988226019256', '1788971284642', 'Нет'))
+                    await pickOption('Нет');
+                await new Promise(r => setTimeout(r, 300));
+                if (!pickRadioByName('answer_choices_1908101', '3179563', 'Запчасти'))
+                    await pickOption('Запчасти');
+                await new Promise(r => setTimeout(r, 800));
+
+                // «Серия компонент» появляется после выбора «Запчасти».
+                // Вводим префикс серии и кликаем опцию ROBOT_ELECTRIC_WIRING.
                 const seriesInput = await waitFor('#answer_wiki_9008976633551088', 8000);
                 if (!seriesInput) { console.warn('[AF] Поле «Серия компонент» не найдено'); return; }
-                await pickSuggest(seriesInput, 'robot_electric_wiring');
-                console.log('[AF] Серия ROBOT_ELECTRIC_WIRING выбрана');
-                await new Promise(r => setTimeout(r, 600));
+                let seriesPicked = await pickSuggest(seriesInput, 'robot_electric_wiring');
+                if (!seriesPicked) {
+                    console.warn('[AF] Серия: первая попытка не удалась, повтор');
+                    seriesPicked = await pickSuggest(seriesInput, 'ROBOT_ELECTRIC_WIRING');
+                }
+                // Верификация: выбранная серия появляется в чипсах поля
+                let seriesOk = false;
+                for (let i = 0; i < 10; i++) {
+                    const holder = seriesInput.closest('.Question') || document;
+                    if (/ROBOT_ELECTRIC_WIRING/i.test(holder.textContent || '')) { seriesOk = true; break; }
+                    await new Promise(r => setTimeout(r, 400));
+                }
+                console.log('[AF] Серия:', seriesPicked, 'видна в поле:', seriesOk);
+                if (!seriesOk) { console.warn('[AF] Серия не применилась — останавливаемся'); return; }
+                await new Promise(r => setTimeout(r, 800));
 
                 // Далее: переход на стр.2 с Вики.
                 const nextBtn = await waitForText('Далее', 4000);
-                if (nextBtn) { clickEl(nextBtn); console.log('[AF] Нажали «Далее»'); await new Promise(r => setTimeout(r, 800)); }
+                if (nextBtn) { clickEl(nextBtn); console.log('[AF] Нажали «Далее»'); await new Promise(r => setTimeout(r, 1200)); }
                 else { console.log('[AF] Кнопки «Далее» нет — страница с Вики уже видна'); }
 
                 // Стр.2: Вики (suggest «Жгут MIC Service branch») + Количество (=1).
