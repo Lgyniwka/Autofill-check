@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ST Ticket Self-Check
 // @namespace    http://tampermonkey.net/
-// @version      5.14
+// @version      5.15
 // @description  Самопроверка + форма учёта + комментарии. Переходы/поля/резолюция — через API Stracker
 // @author       You
 // @match        https://st.yandex-team.ru/*
@@ -764,6 +764,38 @@
         return null;
     }
 
+    // АВТО-оформление работы подтикета: скрытый iframe страницы учёта
+    // (?st_autowork=calibration). AutoFill сам выбирает «Проверка
+    // калибровок», сохраняет и шлёт AF_CALIB_WORK_DONE.
+    function doCalibWorkInHiddenIframe(calibKey, rover, timeoutMs = 90000) {
+        return new Promise(resolve => {
+            const url = 'https://tools.sdc.yandex-team.ru/accounting-fleet-works?rover='
+                + encodeURIComponent(rover) + '&ticket=' + encodeURIComponent(calibKey)
+                + '&platform=robot_r3&event_id=&st_autowork=calibration';
+            const fr = document.createElement('iframe');
+            fr.src = url;
+            fr.style.cssText = 'position:fixed;right:-10000px;bottom:-10000px;width:900px;height:700px;border:0;opacity:0;pointer-events:none;';
+            document.body.appendChild(fr);
+            const t0 = Date.now();
+            const onMsg = ev => {
+                const d = ev.data || {};
+                if (d.type === 'AF_CALIB_WORK_DONE') {
+                    cleanup();
+                    resolve(true);
+                }
+            };
+            const cleanup = () => {
+                window.removeEventListener('message', onMsg);
+                clearInterval(iv);
+                setTimeout(() => { try { fr.remove(); } catch (e) {} }, 3000);
+            };
+            window.addEventListener('message', onMsg);
+            const iv = setInterval(() => {
+                if (Date.now() - t0 > timeoutMs) { cleanup(); resolve(false); }
+            }, 500);
+        });
+    }
+
     async function closeCalibrationSubticket(mainKey, rover) {
         if (!OAUTH_TOKEN) { showTokenModal(); return; }
         console.log('[ST] ППР: ищу подтикет «Проверить калибровки»…');
@@ -789,12 +821,22 @@
         await runTransition(calibKey, ['inProgress', 'В работе'], 10000, { components: PPR_CALIB.COMPONENT_ID, deadline: todayStr() });
         await sleep(300);
 
-        // 2. Форма учёта работ — макрос /iframe/ комментарием; вставку/выбор работы — вручную
+        // 2. Форма учёта работ — макрос /iframe/ комментарием (визуально в тикете)
         const iframeMacro = `/iframe/(src="https://tools.sdc.yandex-team.ru/accounting-fleet-works?rover=${rover}&ticket=${calibKey}&platform=robot_r3&event_id=" width="1000px" height="600px" frameborder="0")`;
         try {
             await apiRequest('POST', `https://st-api.yandex-team.ru/v2/issues/${calibKey}/comments`, { text: iframeMacro });
             console.log('[ST] Калибровки: форма учёта вставлена');
         } catch (e) {}
+
+        // 2.1 АВТО-оформление работы «Проверка калибровок»: открываем страницу
+        //     учёта скрытым iframe с st_autowork=calibration — AutoFill сам
+        //     выбирает работу и сохраняет (SDGWORKS). Без оформленной работы
+        //     тикет калибровок не закрывается.
+        const workDone = await doCalibWorkInHiddenIframe(calibKey, rover, 90000);
+        if (!workDone) {
+            console.warn('[ST] Калибровки: работа не оформлена автоматически');
+            showToast('Калибровки: работа не оформлена — оформи вручную, иначе тикет не закроется', 8000);
+        }
 
         // 3. Комментарий «Проверили калибровки»
         try {

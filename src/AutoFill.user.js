@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Accounting Form AutoFill
 // @namespace    https://github.com/Lgyniwka/Autofill-check
-// @version      2.23
+// @version      2.24
 // @description  Плавающая панель + отправка комментария + переход статусов. Пресеты: QR, ППР (форма осмотра), жгут микрофонов, АКБ
 // @author       You
 // @match        https://tools.sdc.yandex-team.ru/accounting-fleet-works*
@@ -969,8 +969,8 @@
 
                         if (saved) {
                             setTimeout(() => {
-                                // Всегда отправляем комментарий
-                                sendCommentToParent(commentText);
+                                // Всегда отправляем комментарий (кроме авторежима без текста)
+                                if (commentText) { sendCommentToParent(commentText); }
 
                                 // Колбэк после сохранения (напр. команда заказа запчастей)
                                 if (typeof onSaved === 'function') onSaved(saved);
@@ -1001,6 +1001,42 @@
             }
         }, 300);
     }
+
+    // =====================================================
+    //  Авторежим оформления работы: Self_check открывает страницу
+    //  учёта (обычно скрытым iframe) с параметром st_autowork=<ключ>
+    //  — мы сами выбираем работу, сохраняем и сообщаем родителю.
+    //  (используется для авто-оформления «Проверка калибровок»
+    //  в подтикете калибровок при ППР-флоу)
+    // =====================================================
+    const WORK_AUTOS = {
+        calibration: { search: 'калибров', match: 'Проверка калибровок' }
+    };
+
+    (function autoworkMode() {
+        const key = new URLSearchParams(location.search).get('st_autowork');
+        if (!key) return;
+        const cfg = WORK_AUTOS[key];
+        if (!cfg) { console.warn('[AF] st_autowork: неизвестный ключ', key); return; }
+        console.log('[AF] Авторежим работы:', key);
+        let ticks = 0;
+        const iv = setInterval(() => {
+            ticks++;
+            if (ticks > 120) { clearInterval(iv); console.warn('[AF] Авторежим: поле работ не появилось'); return; }
+            const input = document.querySelector('input[placeholder="Добавить работы"]');
+            if (!input) return;
+            clearInterval(iv);
+            const fake = document.createElement('button');
+            doAction(fake, cfg.search, cfg.match, '', null, () => {
+                console.log('[AF] Авторежим: работа оформлена, сообщаю родителю');
+                try {
+                    (window.parent !== window ? window.parent : window.opener)
+                        .postMessage({ type: 'AF_CALIB_WORK_DONE', work: key }, '*');
+                } catch (e) {}
+                setTimeout(() => { try { window.close(); } catch (e) {} }, 800);
+            });
+        }, 500);
+    })();
 
     panel.querySelectorAll('.acp-btn').forEach(btn => {
         btn.dataset.originalText = btn.textContent;
