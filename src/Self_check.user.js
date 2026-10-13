@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ST Ticket Self-Check
 // @namespace    http://tampermonkey.net/
-// @version      5.0
+// @version      5.1
 // @description  Самопроверка + форма учёта + комментарии. Переходы/поля/резолюция — через API Stracker
 // @author       You
 // @match        https://st.yandex-team.ru/*
@@ -244,7 +244,7 @@
 
 
     // =====================================================
-    //  Переходы: список → найти по display → POST /_execute
+    //  Переходы: список → найти по id/display (RU/EN) → POST /_execute
     // =====================================================
     async function getTransitions(issueKey) {
         try {
@@ -257,27 +257,41 @@
     }
 
 
-    async function runTransitionByDisplay(issueKey, displayName, timeoutMs = 10000, body) {
+    // accept: список вариантов совпадения.
+    // лучше всего передавать целевой СТАТУС по ключу (напр. 'treated', 'inProgress', 'check', 'closed'),
+    // дополнительно можно перечислить имена переходов (ru/en display) и id транзишена.
+    async function runTransition(issueKey, accept, timeoutMs = 10000, body) {
         if (!OAUTH_TOKEN) { showTokenModal(); return false; }
+        const names = Array.isArray(accept) ? accept : [accept];
+        const norm = s => String(s || '').trim().toLowerCase();
         const start = Date.now();
         while (Date.now() - start < timeoutMs) {
             const list = await getTransitions(issueKey);
-            const t = list.find(x => (x.display || '').trim() === displayName);
+            const t = list.find(x => {
+                const id = norm(x.id);
+                const display = norm(x.display);
+                const toKey = norm(x.to && (x.to.key || x.to.id));
+                return names.some(n => {
+                    const v = norm(n);
+                    return id === v || display === v || toKey === v;
+                });
+            });
             if (t) {
                 const url = `https://st-api.yandex-team.ru/v3/issues/${issueKey}/transitions/${t.id}/_execute`;
-                console.log('[ST] Выполняю переход «' + displayName + '» через', url);
+                const toKey = t.to && (t.to.key || t.to.id);
+                console.log('[ST] Переход ' + (toKey ? '-> ' + toKey : names[0]) + ' (display=' + t.display + ')');
                 try {
                     await apiRequest('POST', url, body || undefined);
-                    console.log('[ST] Переход выполнен:', displayName);
+                    console.log('[ST] Переход выполнен ' + (toKey ? '-> ' + toKey : names[0]) + ' (display=' + t.display + ')');
                     return true;
                 } catch (e) {
-                    console.warn('[ST] Переход «' + displayName + '» не выполнен:', e.status, String(e.text || '').slice(0, 400));
+                    console.warn('[ST] Переход в ' + names[0] + ' не выполнен:', e.status, String(e.text || '').slice(0, 400));
                     return false;
                 }
             }
             await sleep(600);
         }
-        console.warn('[ST] Переход «' + displayName + '» не найден за отведённое время.');
+        console.warn('[ST] Переход ' + names.join('/') + ' не найден за отведённое время.');
         return false;
     }
 
@@ -587,13 +601,13 @@
             } catch (e) {
                 console.warn('[ST] PATCH компонента/дедлайна не прошёл:', e.status, String(e.text || '').slice(0, 300));
             }
-            const okTreated = await runTransitionByDisplay(issueKey, 'Передать механикам', 8000);
-            console.log('[ST] Переход «Передать механикам»: ' + (okTreated ? 'выполнен' : 'не найден'));
+            const okTreated = await runTransition(issueKey, 'treated', 8000);
+            console.log('[ST] Переход в «Обработан»: ' + (okTreated ? 'выполнен' : 'не найден'));
             await sleep(1500);
 
-            // 0.1 Кнопка «Заказать запчасти» вставляет форму 13693051 в комментарий тикета
-            const clicked = await clickByText('Заказать запчасти', 15000);
-            console.log('[ST] Кнопка «Заказать запчасти»: ' + (clicked ? 'нажата' : 'не найдена'));
+            // 0.1 Переход «Заказать запчасти» (treated -> delieveryWaiting) открывает доступ к форме 13693051
+            const okOrder = await runTransition(issueKey, 'delieveryWaiting', 15000);
+            console.log('[ST] Переход «Заказать запчасти»: ' + (okOrder ? 'выполнен' : 'не найден'));
             await sleep(1500);
 
             // 1. Локация — либо по id из AutoFill, либо по тексту
@@ -629,13 +643,14 @@
             console.log('[ST] Ответ форм:', JSON.stringify(res));
             showToast('Заказ запчастей создан (SDCWH)', 4000);
 
-            // 5. Далее статусы: «В работе» → «Проверка» → «Закрыт» + итоговый комментарий
+            // 5. Далее статусы: «Ожидание поставки» → «Обработан» → «В работе» → «Проверка» → «Закрыт» + итоговый комментарий
             await sleep(1500);
-            await runTransitionByDisplay(issueKey, 'Взять в работу');
+            await runTransition(issueKey, 'treated');        // delieveryWaiting -> treated (вернулись из Ожидания поставки)
+            await runTransition(issueKey, 'inProgress');     // treated -> inProgress (Взять в работу)
             await setSolutionViaApi(issueKey, 'CHANGE');
-            await runTransitionByDisplay(issueKey, 'В проверку');
+            await runTransition(issueKey, 'check');
             await setDefectCodeApi(issueKey, '0');
-            await runTransitionByDisplay(issueKey, 'Закрыть (нужный)', 10000, { resolution: 'fixed' });
+            await runTransition(issueKey, 'closed', 10000, { resolution: 'fixed' });
             await sendPostComment(issueKey, 'Установили жгут микрофона');
             showToast('Жгут микрофона: готово', 7000);
         } catch (e) {
@@ -655,23 +670,23 @@
         if (!OAUTH_TOKEN) { showTokenModal(); return; }
 
         // 0. Если не в «Новом» — переводим туда (если уже в Новом, перехода нет, идём дальше)
-        await runTransitionByDisplay(issueKey, 'Новый', 1500);
+        await runTransition(issueKey, 'new', 1500);
 
         // 1. Компонент
         await setComponentApi(issueKey, 'ROBOT_BODY_SKIN');
 
         // 2. Обработан (Передать механикам)
-        await runTransitionByDisplay(issueKey, 'Передать механикам');
+        await runTransition(issueKey, 'treated');
         // 3. В работе
-        await runTransitionByDisplay(issueKey, 'Взять в работу');
+        await runTransition(issueKey, 'inProgress');
         // 4. Способ решения
         await setSolutionViaApi(issueKey, 'CHANGE');
         // 5. Проверка
-        await runTransitionByDisplay(issueKey, 'В проверку');
+        await runTransition(issueKey, 'check');
         // 6. Код дефекта
         await setDefectCodeApi(issueKey, '0');
         // 7. Закрыт (резолюция в теле перехода)
-        await runTransitionByDisplay(issueKey, 'Закрыть (нужный)', 10000, { resolution: 'fixed' });
+        await runTransition(issueKey, 'closed', 10000, { resolution: 'fixed' });
 
 
         const elapsedSec = ((Date.now() - startedAt) / 1000).toFixed(1);
