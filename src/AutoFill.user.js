@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Accounting Form AutoFill
 // @namespace    https://github.com/Lgyniwka/Autofill-check
-// @version      2.2
+// @version      2.3
 // @description  Плавающая панель + отправка комментария + переход статусов только для Замена QR
 // @author       You
 // @match        https://tools.sdc.yandex-team.ru/accounting-fleet-works*
@@ -13,6 +13,120 @@
 
 (function () {
     'use strict';
+
+    // =====================================================
+    //  Заказ запчастей (форма 154795). Обрабатываем СРАЗУ и выходим,
+    //  чтобы не выполнять панель и localStorage (в sandbox-iframe это упало бы).
+    // =====================================================
+    if (/\/surveys\/154795/.test(location.href)) {
+        console.log('[AF] Режим формы заказа запчастей (154795) — ждём сообщение от родителя');
+
+        function waitFor(sel, timeout = 8000) {
+            return new Promise(resolve => {
+                const el = document.querySelector(sel);
+                if (el) return resolve(el);
+                const t0 = Date.now();
+                const iv = setInterval(() => {
+                    const e = document.querySelector(sel);
+                    if (e) { clearInterval(iv); resolve(e); }
+                    else if (Date.now() - t0 > timeout) { clearInterval(iv); resolve(null); }
+                }, 300);
+            });
+        }
+        function waitForText(text, timeout = 8000) {
+            return new Promise(resolve => {
+                const find = () => [...document.querySelectorAll('button, option, div[role=option], li')].find(e => (e.textContent || '').trim() === text);
+                const el = find();
+                if (el) return resolve(el);
+                const t0 = Date.now();
+                const iv = setInterval(() => {
+                    const e = find();
+                    if (e) { clearInterval(iv); resolve(e); }
+                    else if (Date.now() - t0 > timeout) { clearInterval(iv); resolve(null); }
+                }, 300);
+            });
+        }
+        function clickEl(el) { if (el) el.click(); }
+        function setValue(input, value) {
+            input.focus();
+            try {
+                const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set;
+                setter.call(input, value);
+            } catch (e) {}
+            input.value = value;
+            input.dispatchEvent(new Event('focus', { bubbles: true }));
+            input.dispatchEvent(new InputEvent('input', { bubbles: true, data: value, inputType: 'insertText' }));
+            input.dispatchEvent(new Event('change', { bubbles: true }));
+        }
+        // Выбрать опцию/режим по подстроке текста (для радио и саджестов).
+        async function pickOption(labelContains) {
+            const t0 = Date.now();
+            return new Promise(resolve => {
+                const iv = setInterval(() => {
+                    const opts = [...document.querySelectorAll('label[class*="Option"], [role="option"], li[role="option"], .g-radio-group__option')];
+                    const target = opts.find(o => (o.textContent || '').toLowerCase().includes(String(labelContains).toLowerCase()));
+                    if (target) { clearInterval(iv); target.click(); resolve(true); }
+                    else if (Date.now() - t0 > 6000) { clearInterval(iv); resolve(false); }
+                }, 300);
+            });
+        }
+        async function pickSuggest(input, value) {
+            if (!input || !value) return false;
+            setValue(input, value);
+            return new Promise(resolve => {
+                const t0 = Date.now();
+                const iv = setInterval(() => {
+                    const opts = [...document.querySelectorAll('[role="option"], li[role="option"], div[role="option"]')];
+                    const target = opts.find(o => (o.textContent || '').trim().toLowerCase().includes(String(value).toLowerCase()));
+                    if (target) { clearInterval(iv); target.click(); resolve(true); }
+                    else if (Date.now() - t0 > 6000) { clearInterval(iv); resolve(false); }
+                }, 300);
+            });
+        }
+
+        async function runSpareOrderForm(locationName) {
+            console.log('[AF] Заполняю форму заказа, локация =', locationName);
+            try {
+                // 1. Локация (suggest)
+                const locInput = await waitFor('#answer_wiki_9008987764243672', 12000);
+                if (!locInput) { console.warn('[AF] Поле локации не найдено'); return; }
+                const locPicked = await pickSuggest(locInput, locationName);
+                console.log('[AF] Локация:', locPicked);
+                await new Promise(r => setTimeout(r, 400));
+
+                // 2. Статус робота -> «Не донор» (если невыбрано)
+                await pickOption('Не донор');
+                await new Promise(r => setTimeout(r, 300));
+
+                // 3. Это СК? -> «Нет»
+                await pickOption('Нет');
+                await new Promise(r => setTimeout(r, 300));
+
+                // 4. Тип ТМЦ -> «Запчасти»
+                await pickOption('Запчасти');
+                await new Promise(r => setTimeout(r, 500));
+
+                // 5. Отправить
+                const send = await waitForText('Отправить', 6000);
+                if (send) { clickEl(send); console.log('[AF] Нажали «Отправить»'); }
+                else { console.warn('[AF] Кнопка «Отправить» не найдена'); }
+            } catch (e) {
+                console.warn('[AF] Ошибка заполнения формы заказа:', e);
+            }
+        }
+
+        let formBusy = false;
+        window.addEventListener('message', ev => {
+            const d = ev.data || {};
+            if (d && d.type === 'ST_ORDER_SPARE_PARTS' && d.payload && d.payload.locationName) {
+                if (formBusy) { console.warn('[AF] Форма уже заполняется, пропуск.'); return; }
+                formBusy = true;
+                ev.source && ev.source.postMessage && ev.source.postMessage({ type: 'AF_ORDER_RECEIVED' }, '*');
+                runSpareOrderForm(d.payload.locationName);
+            }
+        });
+        return; // форма заказа обработана — дальше не идём
+    }
 
     const STORAGE_KEY = 'accounting-panel-position';
     const COLLAPSE_KEY = 'accounting-panel-collapsed';
@@ -154,107 +268,6 @@
             type: 'ST_HELPER_ADD_COMMENT',
             text: text
         }, '*');
-    }
-
-    // =====================================================
-    //  Заказ запчастей (форма 154795, если если on forms.yandex-team.ru/surveys/154795)
-    //  Родитель (Self_check) обнаружит iframe и пришлёт {type:'ST_ORDER_SPARE_PARTS', payload:{locationName}}
-    // =====================================================
-    const IS_SPARE_ORDER_FORM = /\/surveys\/154795/.test(location.href);
-
-    function waitFor(sel, timeout = 8000) {
-        return new Promise(resolve => {
-            const el = document.querySelector(sel);
-            if (el) return resolve(el);
-            const t0 = Date.now();
-            const iv = setInterval(() => {
-                const e = document.querySelector(sel);
-                if (e) { clearInterval(iv); resolve(e); }
-                else if (Date.now() - t0 > timeout) { clearInterval(iv); resolve(null); }
-            }, 300);
-        });
-    }
-    function waitForText(text, timeout = 8000) {
-        return new Promise(resolve => {
-            const find = () => [...document.querySelectorAll('button, option, div[role=option], li')].find(e => (e.textContent || '').trim() === text);
-            const el = find();
-            if (el) return resolve(el);
-            const t0 = Date.now();
-            const iv = setInterval(() => {
-                const e = find();
-                if (e) { clearInterval(iv); resolve(e); }
-                else if (Date.now() - t0 > timeout) { clearInterval(iv); resolve(null); }
-            }, 300);
-        });
-    }
-    function clickEl(el) { if (el) el.click(); }
-
-    async function pickSuggest(input, value) {
-        if (!input || !value) return false;
-        const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set;
-        input.focus();
-        setter.call(input, value);
-        input.value = value;
-        input.dispatchEvent(new Event('focus', { bubbles: true }));
-        input.dispatchEvent(new InputEvent('input', { bubbles: true, data: value, inputType: 'insertText' }));
-        input.dispatchEvent(new Event('change', { bubbles: true }));
-        // дождаться выпадашки и кликнуть подходящую опцию
-        return new Promise(resolve => {
-            const t0 = Date.now();
-            const iv = setInterval(() => {
-                const opts = [...document.querySelectorAll('[role="option"], li[role="option"], .sv-dialog__list option, div[role="option"]')];
-                const target = opts.find(o => (o.textContent || '').trim().toLowerCase().includes(String(value).toLowerCase()));
-                if (target) { clearInterval(iv); target.click(); resolve(true); }
-                else if (Date.now() - t0 > 6000) { clearInterval(iv); resolve(false); }
-            }, 300);
-        });
-    }
-
-    async function runSpareOrderForm(locationName) {
-        console.log('[AF] Форма заказа запчастей (154795), локация =', locationName);
-        try {
-            // Стр.1: локация (suggest). Остальное уже по умолчанию: Не донор, Нет, Запчасти, серия предзаполнена.
-            const locInput = await waitFor('#answer_wiki_9008987764243672');
-            if (!locInput) { console.warn('[AF] Поле локации не найдено'); return; }
-            const locPicked = await pickSuggest(locInput, locationName);
-            console.log('[AF] Локация выбрана:', locPicked);
-            await new Promise(r => setTimeout(r, 500));
-
-            const next = await waitForText('Далее', 6000);
-            if (next) { clickEl(next); console.log('[AF] Нажали «Далее»'); }
-            else { console.warn('[AF] Кнопка «Далее» не найдена (может, уже на стр.2)'); }
-
-            // Стр.2: Вики (suggest) + Количество (=1 по умолчанию). Находим input в блоке вопроса «Вики».
-            await new Promise(r => setTimeout(r, 800));
-            const wikiInput = await waitFor('input[aria-label*="Для поиска"], input[role="combobox"]', 8000);
-            const wikiPicked = wikiInput ? await pickSuggest(wikiInput, 'Жгут MIC Service branch') : false;
-            console.log('[AF] Позиция Вики выбрана:', wikiPicked);
-
-            await new Promise(r => setTimeout(r, 500));
-            const send = await waitForText('Отправить', 6000);
-            if (send) { clickEl(send); console.log('[AF] Нажали «Отправить»'); }
-            else { console.warn('[AF] Кнопка «Отправить» не найдена'); }
-        } catch (e) {
-            console.warn('[AF] Ошибка заполнения формы заказа:', e);
-        }
-    }
-
-    if (IS_SPARE_ORDER_FORM) {
-        let formBusy = false;
-        window.addEventListener('message', ev => {
-            const d = ev.data || {};
-            if (d && d.type === 'ST_ORDER_SPARE_PARTS' && d.payload && d.payload.locationName) {
-                if (formBusy) { console.warn('[AF] Форма уже заполняется, пропуск.'); return; }
-                formBusy = true;
-                // Подтверждаем родителю, что сообщение дошло и AutoFill жив.
-                ev.source && ev.source.postMessage && ev.source.postMessage(
-                    { type: 'AF_ORDER_RECEIVED' }, '*'
-                );
-                runSpareOrderForm(d.payload.locationName);
-            }
-        });
-        console.log('[AF] Режим формы заказа запчастей активен (ждём сообщение от родителя)');
-        return; // панель учёта работ тут не строим
     }
 
     // =====================================================
