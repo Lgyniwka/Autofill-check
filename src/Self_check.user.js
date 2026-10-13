@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ST Ticket Self-Check
 // @namespace    http://tampermonkey.net/
-// @version      5.11
+// @version      5.12
 // @description  Самопроверка + форма учёта + комментарии. Переходы/поля/резолюция — через API Stracker
 // @author       You
 // @match        https://st.yandex-team.ru/*
@@ -630,15 +630,23 @@
         });
     }
 
+    // Подписи пресетов = текст на кнопке AutoFill-панели
+    const PRESET_LABELS = {
+        mic: 'Установка жгута микрофонов',
+        battery: 'Замена коннекторов АКБ',
+        batteryCon: 'Замена жгута АКБ + КОН.'
+    };
+
     async function runMicrophoneOrder(locationName, locationId, issueKey, preset) {
         preset = preset || 'mic';
+        const presetLabel = PRESET_LABELS[preset] || preset;
         if (!OAUTH_TOKEN) { showTokenModal(); return; }
         if (!issueKey) { console.warn('[ST] Тикет не определён для заказа жгута'); showToast('Не определён тикет'); return; }
 
         try {
             // 0. «Обработан» — по скиллу: компонент + дедлайн, затем переход.
             //    Только после этого на родителе появляется кнопка «Заказать запчасти».
-            console.log('[ST] Жгут микрофона: Обработан (компонент+дедлайн)');
+            console.log(`[ST] ${presetLabel}: Обработан (компонент+дедлайн)`);
             try {
                 const today = new Date().toISOString().slice(0, 10);
                 await apiRequest('PATCH', `https://st-api.yandex-team.ru/v3/issues/${issueKey}`, {
@@ -692,7 +700,7 @@
             await runTransition(issueKey, 'check');
             await setDefectCodeApi(issueKey, '0');
             await runTransition(issueKey, ['closed', 'closedMeta'], 10000, { resolution: 'fixed' });
-            showToast('Жгут микрофона: готово', 7000);
+            showToast(presetLabel + ': готово', 7000);
         } catch (e) {
             console.warn('[ST] Ошибка заказа запчастей:', e.status, String(e.text || '').slice(0, 500));
             showToast('Не удалось создать заказ запчастей: ' + String(e.status || 'err'), 7000);

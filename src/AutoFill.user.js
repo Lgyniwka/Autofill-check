@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Accounting Form AutoFill
 // @namespace    https://github.com/Lgyniwka/Autofill-check
-// @version      2.18
+// @version      2.19
 // @description  Плавающая панель + отправка комментария + переход статусов только для Замена QR
 // @author       You
 // @match        https://tools.sdc.yandex-team.ru/accounting-fleet-works*
@@ -115,20 +115,29 @@
                         try { target.dispatchEvent(new MouseEvent('mouseup', ev)); } catch (e) {}
                         try { target.dispatchEvent(new MouseEvent('click', ev)); } catch (e) {}
                         setTimeout(() => {
-                            // Проверяем, применился ли выбор (чипс появился в поле).
-                            // Только если НЕ применился — жмём Enter (иначе в
-                            // multichoice-саджесте Enter добавит ЛИШНЮЮ серию).
+                            // Проверяем, ПРИМЕНИЛСЯ ли выбор, а не просто наличие текста.
+                            // Признаки выбора: поле ОЧИЩЕНО и/или в вопросе появился чипс.
                             const inpNow = document.getElementById(input.id);
                             const holder = (inpNow && inpNow.closest('.Question')) || document;
-                            const applied = norm(holder.textContent || '').includes(norm(value));
+                            const hasChip = !!holder.querySelector('[class*="SelectedItem"], [class*="Chip"]');
+                            const inpCleared = inpNow && inpNow.value === '';
+                            const inpChanged = inpNow && inpNow.value !== String(value);
+                            let applied = hasChip || inpCleared || inpChanged;
                             if (!applied && inpNow) {
-                                console.warn('[AF] Клик по опции саджеста не применился — Enter');
+                                // Клик не сработал: текст так и висит в поле, позиция
+                                // НЕ выбрана. Фолбэк — клавиатура: ArrowDown (подсветит
+                                // верхнюю опцию отфильтрованного списка) + Enter.
+                                console.warn('[AF] Клик по опции саджеста не применился — ArrowDown+Enter');
                                 inpNow.focus();
-                                ['keydown', 'keypress', 'keyup'].forEach(t =>
-                                    inpNow.dispatchEvent(new KeyboardEvent(t, { key: 'Enter', code: 'Enter', keyCode: 13, which: 13, bubbles: true })));
+                                inpNow.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowDown', code: 'ArrowDown', keyCode: 40, which: 40, bubbles: true }));
+                                inpNow.dispatchEvent(new KeyboardEvent('keyup', { key: 'ArrowDown', code: 'ArrowDown', keyCode: 40, which: 40, bubbles: true }));
+                                setTimeout(() => {
+                                    ['keydown', 'keypress', 'keyup'].forEach(t =>
+                                        inpNow.dispatchEvent(new KeyboardEvent(t, { key: 'Enter', code: 'Enter', keyCode: 13, which: 13, bubbles: true })));
+                                }, 250);
                             }
                             resolve(true);
-                        }, 400);
+                        }, 450);
                     }
                     else if (Date.now() - t0 > 7000) { clearInterval(iv); resolve(false); }
                 }, 300);
@@ -257,8 +266,26 @@
                 // Стр.2: Вики (suggest по пресету) + Количество (из пресета).
                 const wikiInput = await findInputByQuestionLabel('Вики', 8000);
                 if (wikiInput) {
-                    const picked = await pickSuggest(wikiInput, preset.wikiText);
+                    let picked = await pickSuggest(wikiInput, preset.wikiText);
                     console.log('[AF] Вики выбрана:', picked, preset.wikiText);
+                    // Верификация на уровне флоу: чипс/поле очищено, иначе —
+                    // вторая попытка клавиатурной навигацией.
+                    let wikiOk = false;
+                    for (let i = 0; i < 10; i++) {
+                        const holder = wikiInput.closest('.Question');
+                        if (wikiInput.value === '' || (holder && holder.querySelector('[class*="SelectedItem"], [class*="Chip"]'))) { wikiOk = true; break; }
+                        await new Promise(r => setTimeout(r, 400));
+                    }
+                    if (!wikiOk) {
+                        console.warn('[AF] Вики не применилась — повтор клавиатурой');
+                        wikiInput.focus();
+                        wikiInput.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowDown', code: 'ArrowDown', keyCode: 40, which: 40, bubbles: true }));
+                        await new Promise(r => setTimeout(r, 250));
+                        ['keydown', 'keypress', 'keyup'].forEach(t =>
+                            wikiInput.dispatchEvent(new KeyboardEvent(t, { key: 'Enter', code: 'Enter', keyCode: 13, which: 13, bubbles: true })));
+                        await new Promise(r => setTimeout(r, 600));
+                    }
+                    console.log('[AF] Вики применилась:', wikiOk);
                 } else {
                     console.warn('[AF] Поле «Вики» не найдено');
                 }
