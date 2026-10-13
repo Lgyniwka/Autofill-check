@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ST Ticket Self-Check
 // @namespace    http://tampermonkey.net/
-// @version      5.9
+// @version      5.10
 // @description  Самопроверка + форма учёта + комментарии. Переходы/поля/резолюция — через API Stracker
 // @author       You
 // @match        https://st.yandex-team.ru/*
@@ -595,9 +595,9 @@
                             if (k === 'iframe') return; // служебный, не поле формы
                             prefill[k] = v;
                         });
-                        // src без sandbox-параметров iframe — открываем в НОВОМ ОКНЕ,
-                        // где AutoFill работает как обычный userscript (не в sandbox-iframe).
-                        u.searchParams.delete('iframe');
+                        // Сервер формы отдаёт контент ТОЛЬКО в iframe-режиме:
+                        // без параметра iframe=1 ссылка «недоступна». Поэтому
+                        // используем src КАК ЕСТЬ, лишь добавляя st_location.
                         return { surveyId: m[1], prefill, openUrl: u.href };
                     }
                 } catch (e) { console.warn('[ST] Не распарсил src iframe:', e); }
