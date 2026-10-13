@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Accounting Form AutoFill
 // @namespace    https://github.com/Lgyniwka/Autofill-check
-// @version      2.11
+// @version      2.12
 // @description  Плавающая панель + отправка комментария + переход статусов только для Замена QR
 // @author       You
 // @match        https://tools.sdc.yandex-team.ru/accounting-fleet-works*
@@ -453,7 +453,10 @@
         'ТП Некст МСК-1': '1258543',
         'МСК Запад | ТП Запад Роботехнологии МСК-1': '1258544',
         'Воронеж | ТП МК Авто ( Воронеж)': '1258545',
-        'Тюмень': '1258671'
+        'Тюмень': '1258671',
+        'Рободоставка Новый Уренгой': '1259163',
+        '17': '1294998',
+        '18': '1301726'
     };
 
     function showLocationModal(onPick) {
