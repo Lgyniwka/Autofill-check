@@ -1,9 +1,12 @@
 // ==UserScript==
 // @name         QuickBase: Панель базы знаний (все сайты)
-// @namespace    https://github.com/Lgyniwka/Autofill-check
-// @version      0.2.1
+// @namespace    https://github.com/Lgyniwka/Autofill-check/blob/main/src/QuickBase.user.js
+// @version      0.2.2
 // @description  Горячая клавиша Cmd+Ё (macOS) / Ctrl+~ (Windows) — открывает панель со справочниками и ссылками на любой странице браузера. Схема данных — в DATA ниже.
-// @homepageURL  https://github.com/Lgyniwka/Autofill-check
+// @homepageURL  https://github.com/Lgyniwka/Autofill-check/blob/main/src/QuickBase.user.js
+// @supportURL   https://github.com/Lgyniwka/Autofill-check/blob/main/src/QuickBase.user.js
+// @updateURL    https://raw.githubusercontent.com/Lgyniwka/Autofill-check/main/src/QuickBase.user.js
+// @downloadURL  https://raw.githubusercontent.com/Lgyniwka/Autofill-check/main/src/QuickBase.user.js
 // @match        *://*/*
 // @run-at       document-end
 // @grant        GM_setClipboard
