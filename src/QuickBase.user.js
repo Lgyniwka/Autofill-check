@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         QuickBase: Панель базы знаний (все сайты)
 // @namespace    https://github.com/Lgyniwka/Autofill-check/blob/main/src/QuickBase.user.js
-// @version      0.13.3
-// @description  Панель базы знаний. Работы по роботу: приоритет + резолюция из st-api (закрытые тикеты автоматически исчезают из списка, счётчик обновляется). Кружки приоритетов, копирование названий с эмодзи. Токен — кнопка 🔑 (один раз).
+// @version      0.13.4
+// @description  Панель базы знаний. Работы по роботу: скрытие тикетов как на портале — не только по резолюции, но и по типу статуса (cancelled/done/closed). Кружки приоритетов, копирование названий с эмодзи, токен 🔑 один раз.
 // @homepageURL  https://github.com/Lgyniwka/Autofill-check/blob/main/src/QuickBase.user.js
 // @supportURL   https://github.com/Lgyniwka/Autofill-check/blob/main/src/QuickBase.user.js
 // @updateURL    https://raw.githubusercontent.com/Lgyniwka/Autofill-check/main/src/QuickBase.user.js
@@ -539,9 +539,18 @@
                             pr = (issue && issue.priority && (issue.priority.key || issue.priority.display)) ? String(issue.priority.key || issue.priority.display).toLowerCase() : '';
                             const resolution = issue && issue.resolution && (issue.resolution.key || issue.resolution.display);
                             closedByApi = !!resolution && String(resolution).toLowerCase() !== "none";
+                            // Как на портале: "Status Type": !cancelled !done (резолюция может быть пустой)
+                            const stType = issue && issue.status && issue.status.statusType
+                                ? String(issue.status.statusType.key || issue.status.statusType.display || '').toLowerCase()
+                                : '';
+                            const stKey = issue && issue.status ? String(issue.status.key || '').toLowerCase() : '';
+                            if (['cancelled', 'canceled', 'done', 'closed', 'rejected'].includes(stType)) closedByApi = true;
+                            if (['closed', 'cancelled', 'resolved', 'deleted'].includes(stKey)) closedByApi = true;
                             source = 'st-api' + (stToken ? ' (OAuth)' : '');
                             console.log('[QuickBase] ' + t.key + ': приоритет=' + (pr || '—') +
-                                ', резолюция=' + (resolution || 'пусто'));
+                                ', резолюция=' + (resolution || 'пусто') +
+                                ', статус=' + (stKey || '—') + ', тип статуса=' + (stType || '—') +
+                                (closedByApi ? ' → скрыт' : ''));
                         } catch (err) {
                             source = 'не JSON, HTTP ' + res.status;
                         }
