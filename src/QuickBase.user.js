@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         QuickBase: Панель базы знаний (все сайты)
 // @namespace    https://github.com/Lgyniwka/Autofill-check/blob/main/src/QuickBase.user.js
-// @version      0.12.3
-// @description  Панель базы знаний. Работы по роботу: приоритет из Startrek API v2 с диагностикой в консоль ([QuickBase] приоритет …), fallback — HTML тикета. Кружки: красный блокер, оранжевый критичный, жёлтый средний; копирование названий с эмодзи-кружками.
+// @version      0.12.4
+// @description  Панель базы знаний. Работы по роботу: приоритет — сначала Startrek API v2, затем HTML страницы тикета; вся диагностика в консоль ([QuickBase]). Также логируется полный JSON первой работы из issues API.
 // @homepageURL  https://github.com/Lgyniwka/Autofill-check/blob/main/src/QuickBase.user.js
 // @supportURL   https://github.com/Lgyniwka/Autofill-check/blob/main/src/QuickBase.user.js
 // @updateURL    https://raw.githubusercontent.com/Lgyniwka/Autofill-check/main/src/QuickBase.user.js
@@ -406,6 +406,10 @@
                 return;
             }
             console.log('[QuickBase] issues API answer:', data);
+            if (data && data.maintenance && data.maintenance.length) {
+                console.log('[QuickBase] первая работа целиком:',
+                    JSON.stringify(data.maintenance[0], null, 1).slice(0, 1500));
+            }
 
             // Показываем только ОТКРЫТЫЕ работы (resolved/resolution пуст)
             tasks = tasks.filter((it) => {
@@ -473,18 +477,38 @@
                     headers: { 'Accept': 'application/json' },
                     onload: (res) => {
                         let pr = '';
+                        let source = '';
                         try {
                             const issue = JSON.parse(res.responseText);
                             pr = (issue && issue.priority && (issue.priority.key || issue.priority.display)) ? String(issue.priority.key || issue.priority.display).toLowerCase() : '';
-                            console.log('[QuickBase] приоритет ' + t.key + ':', JSON.stringify(issue && issue.priority), '| HTTP', res.status);
+                            source = 'api-v2';
                         } catch (err) {
-                            console.log('[QuickBase] приоритет ' + t.key + ': не JSON, HTTP', res.status, '|', (res.responseText || '').slice(0, 200));
-                            // API не отдал JSON (например, редирект на авторизацию) — парсим HTML страницы тикета
-                            const m = (res.responseText || '').match(/Bubble-priority_priority_([a-z]+)/)
-                                || (res.responseText || '').match(/Bubble-Icon_priority_([a-z]+)/);
-                            if (m) pr = m[1];
+                            source = 'не JSON, HTTP ' + res.status;
                         }
-                        if (!pr && dot) dot.title = 'Приоритет: HTTP ' + res.status + ' (см. консоль)';
+                        if (!pr) {
+                            // v2 не сработал — пробуем HTML страницы тикета
+                            GM_xmlhttpRequest({
+                                method: 'GET',
+                                url: 'https://st.yandex-team.ru/' + t.key,
+                                timeout: 20000,
+                                onload: (res2) => {
+                                    const html = res2.responseText || '';
+                                    let prHtml = '';
+                                    const m = html.match(/Bubble-priority_priority_([a-z]+)/)
+                                        || html.match(/Bubble-Icon_priority_([a-z]+)/);
+                                    if (m) prHtml = m[1];
+                                    console.log('[QuickBase] приоритет ' + t.key + ':',
+                                        'page=>', prHtml || 'нет в HTML', '| HTTP', res2.status,
+                                        '| passport-redirect:', /passport\.yandex-team\.ru/.test(html.slice(0, 500)));
+                                    if (!prHtml && dot) dot.title = 'Приоритет: не найден (см. консоль)';
+                                    applyPr(prHtml);
+                                },
+                                onerror: () => { if (dot) dot.title = 'Приоритет: ошибка загрузки страницы'; },
+                                ontimeout: () => { if (dot) dot.title = 'Приоритет: таймаут страницы'; },
+                            });
+                            return;
+                        }
+                        console.log('[QuickBase] приоритет ' + t.key + ':', pr, '|', source);
                         applyPr(pr);
                     },
                     onerror: () => { if (dot) dot.title = 'Приоритет: ошибка загрузки'; },
