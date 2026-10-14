@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         QuickBase: Панель базы знаний (все сайты)
 // @namespace    https://github.com/Lgyniwka/Autofill-check/blob/main/src/QuickBase.user.js
-// @version      0.11.0
-// @description  Панель базы знаний. Работы по роботу: список открытых тикетов с кружком приоритета (красный — блокер, оранжевый — критичный, жёлтый — средний), кнопка копирования названий. Вход кнопкой-ровером, секции свёрнуты по умолчанию.
+// @version      0.12.0
+// @description  Панель базы знаний. Работы по роботу: открытые тикеты, приоритет подтягивается из Startrek (красный блокер, оранжевый критичный, жёлтый средний), копирование названий. Вход кнопкой-ровером.
 // @homepageURL  https://github.com/Lgyniwka/Autofill-check/blob/main/src/QuickBase.user.js
 // @supportURL   https://github.com/Lgyniwka/Autofill-check/blob/main/src/QuickBase.user.js
 // @updateURL    https://raw.githubusercontent.com/Lgyniwka/Autofill-check/main/src/QuickBase.user.js
@@ -13,6 +13,7 @@
 // @grant        GM_openInTab
 // @grant        GM_xmlhttpRequest
 // @connect      tools.sdc.yandex-team.ru
+// @connect      st.yandex-team.ru
 // @noframes
 // ==/UserScript==
 
@@ -430,9 +431,9 @@
             robotResults.innerHTML =
                 '<div class="qb_robot_status">Открытых работ по a' + num + ': ' + tasks.length +
                 ' <span class="qb_copy_all" title="Скопировать названия всех работ">⧉ копировать названия</span></div>' +
-                tasks.map((t) =>
+                tasks.map((t, idx) =>
                     `<div class="qb_task" data-qb-task="${encode(t)}">
-                        <span class="qb_task_pr" style="background:${priorityColor(t.priority)}" title="Приоритет: ${t.priority || '—'}"></span>
+                        <span class="qb_task_pr" data-qb-pr="${idx}" style="background:${priorityColor(t.priority)}" title="Приоритет: ${t.priority || 'загружаю…'}"></span>
                         <span class="qb_task_key">${t.key}</span>
                         <span class="qb_task_date">${t.created}</span>
                         <span class="qb_task_summary">${t.summary}</span>
@@ -448,6 +449,28 @@
                 el.addEventListener('click', () => {
                     const t = decode(el.dataset.qbTask);
                     GM_openInTab(t.link, { active: true });
+                });
+            });
+
+            // --- Приоритет из Startrek: ходим в каждый тикет и парсим класс Bubble-priority_priority_... ---
+            tasks.forEach((t, idx) => {
+                const dot = robotResults.querySelector(`[data-qb-pr="${idx}"]`);
+                GM_xmlhttpRequest({
+                    method: 'GET',
+                    url: 'https://st.yandex-team.ru/' + t.key,
+                    timeout: 20000,
+                    onload: (res) => {
+                        let pr = '';
+                        const m = (res.responseText || '').match(/Bubble-priority_priority_([a-z]+)/)
+                            || (res.responseText || '').match(/Bubble-Icon_priority_([a-z]+)/);
+                        if (m) pr = m[1];
+                        if (dot) {
+                            dot.style.background = priorityColor(pr);
+                            dot.title = 'Приоритет: ' + (pr || 'не найден');
+                        }
+                    },
+                    onerror: () => { if (dot) dot.title = 'Приоритет: ошибка загрузки'; },
+                    ontimeout: () => { if (dot) dot.title = 'Приоритет: таймаут'; },
                 });
             });
         }
