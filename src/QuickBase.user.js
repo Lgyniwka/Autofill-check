@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         QuickBase: Панель базы знаний (все сайты)
 // @namespace    https://github.com/Lgyniwka/Autofill-check/blob/main/src/QuickBase.user.js
-// @version      0.12.4
-// @description  Панель базы знаний. Работы по роботу: приоритет — сначала Startrek API v2, затем HTML страницы тикета; вся диагностика в консоль ([QuickBase]). Также логируется полный JSON первой работы из issues API.
+// @version      0.13.0
+// @description  Панель базы знаний. Работы по роботу: приоритет через st-api Startrek с OAuth-токеном (кнопка 🔑 — тот же токен, что в Self_check), fallback — HTML тикета. Кружки приоритетов + копирование названий с эмодзи.
 // @homepageURL  https://github.com/Lgyniwka/Autofill-check/blob/main/src/QuickBase.user.js
 // @supportURL   https://github.com/Lgyniwka/Autofill-check/blob/main/src/QuickBase.user.js
 // @updateURL    https://raw.githubusercontent.com/Lgyniwka/Autofill-check/main/src/QuickBase.user.js
@@ -12,8 +12,11 @@
 // @grant        GM_setClipboard
 // @grant        GM_openInTab
 // @grant        GM_xmlhttpRequest
+// @grant        GM_getValue
+// @grant        GM_setValue
 // @connect      tools.sdc.yandex-team.ru
 // @connect      st.yandex-team.ru
+// @connect      st-api.yandex-team.ru
 // @noframes
 // ==/UserScript==
 
@@ -345,6 +348,46 @@
         });
         robotGo.addEventListener('click', loadRobotTasks);
 
+        // --- OAuth-токен Startrek (для приоритетов), как в Self_check ---
+        const TOKEN_STORE_KEY = 'st_token'; // тот же ключ:GM-хранилище может быть общим
+        const TOKEN_URL = 'https://oauth.yandex-team.ru/authorize?response_type=token&client_id=5f671d781aca402ab7460fde4050267b';
+        let stToken = GM_getValue(TOKEN_STORE_KEY, '') || GM_getValue('qb_st_token', '');
+        const tokenBtn = panel.querySelector('#qb_token_btn');
+        const updateTokenBtn = () => tokenBtn.classList.toggle('qb_no_token', !stToken);
+        updateTokenBtn();
+        tokenBtn.addEventListener('click', () => {
+            const overlay = document.createElement('div');
+            overlay.id = 'qb_token_modal_overlay';
+            overlay.innerHTML = `
+                <div id="qb_token_modal">
+                    <div class="qb_tm_title">OAuth-токен Startrek</div>
+                    <div class="qb_tm_text">
+                        Нужен, чтобы подтягивать приоритеты работ (API st-api.yandex-team.ru).<br>
+                        Тот же токен, что в Self_check. <a href="${TOKEN_URL}" target="_blank">Получить токен</a>
+                    </div>
+                    <input type="password" placeholder="Вставь access_token…" autocomplete="off">
+                    <div class="qb_tm_actions">
+                        <button class="qb_tm_save">Сохранить</button>
+                        <button class="qb_tm_later">Позже</button>
+                    </div>
+                </div>`;
+            panel.appendChild(overlay);
+            const tInput = overlay.querySelector('input');
+            tInput.focus();
+            overlay.querySelector('.qb_tm_save').addEventListener('click', () => {
+                const val = tInput.value.trim();
+                if (val) {
+                    stToken = val;
+                    GM_setValue(TOKEN_STORE_KEY, val);
+                    GM_setValue('qb_st_token', val);
+                    updateTokenBtn();
+                }
+                overlay.remove();
+                if (val && robotInput.value.trim()) loadRobotTasks(); // перезапросить приоритеты
+            });
+            overlay.querySelector('.qb_tm_later').addEventListener('click', () => overlay.remove());
+        });
+
         function loadRobotTasks() {
             const num = robotInput.value.trim();
             if (!num) {
@@ -472,19 +515,22 @@
                 };
                 GM_xmlhttpRequest({
                     method: 'GET',
-                    url: 'https://st.yandex-team.ru/api/v2/issues/' + t.key,
+                    url: 'https://st-api.yandex-team.ru/v2/issues/' + t.key,
                     timeout: 20000,
-                    headers: { 'Accept': 'application/json' },
+                    headers: stToken
+                        ? { 'Authorization': 'OAuth ' + stToken, 'Accept': 'application/json' }
+                        : { 'Accept': 'application/json' },
                     onload: (res) => {
                         let pr = '';
                         let source = '';
                         try {
                             const issue = JSON.parse(res.responseText);
                             pr = (issue && issue.priority && (issue.priority.key || issue.priority.display)) ? String(issue.priority.key || issue.priority.display).toLowerCase() : '';
-                            source = 'api-v2';
+                            source = 'st-api' + (stToken ? ' (OAuth)' : '');
                         } catch (err) {
                             source = 'не JSON, HTTP ' + res.status;
                         }
+                        if (!pr && stToken) console.log('[QuickBase] приоритет ' + t.key + ': API не дал приоритет |', source);
                         if (!pr) {
                             // v2 не сработал — пробуем HTML страницы тикета
                             GM_xmlhttpRequest({
@@ -686,6 +732,36 @@
                     padding: 5px 9px; font-size: 12px;
                 }
                 #${PANEL_ID} #qb_robot_go:hover { background: #262e40; }
+                #${PANEL_ID} #qb_token_btn {
+                    cursor: pointer; user-select: none; flex: none;
+                    background: #1d2330; border: 1px solid #2c3345; border-radius: 8px;
+                    padding: 5px 8px; font-size: 12px;
+                }
+                #${PANEL_ID} #qb_token_btn.qb_no_token { border-color: #e03131; }
+                #${PANEL_ID} #qb_token_btn:hover { background: #262e40; }
+                #${PANEL_ID} #qb_token_modal_overlay {
+                    position: fixed; inset: 0; z-index: ${PANEL_Z + 1};
+                    background: rgba(0,0,0,.55); display: flex; align-items: center; justify-content: center;
+                }
+                #${PANEL_ID} #qb_token_modal {
+                    background: #161a23; color: #e6e9f0; border: 1px solid #2c3345; border-radius: 12px;
+                    width: 420px; max-width: 92vw; padding: 18px 20px;
+                    box-shadow: 0 12px 48px rgba(0,0,0,.6);
+                }
+                #${PANEL_ID} #qb_token_modal .qb_tm_title { font-weight: 700; font-size: 14px; margin-bottom: 8px; }
+                #${PANEL_ID} #qb_token_modal .qb_tm_text { font-size: 12px; color: #9aa3b8; line-height: 1.5; margin-bottom: 10px; }
+                #${PANEL_ID} #qb_token_modal a { color: #74c0fc; }
+                #${PANEL_ID} #qb_token_modal input {
+                    width: 100%; box-sizing: border-box; height: 32px; padding: 0 10px;
+                    border: 1px solid #2c3345; border-radius: 8px;
+                    background: #0f131c; color: #e6e9f0; font-size: 12px; outline: none; margin-bottom: 8px;
+                }
+                #${PANEL_ID} #qb_token_modal .qb_tm_actions { display: flex; gap: 8px; }
+                #${PANEL_ID} #qb_token_modal button {
+                    flex: 1; height: 32px; border: none; border-radius: 8px; font-size: 12px; cursor: pointer;
+                }
+                #${PANEL_ID} #qb_token_modal .qb_tm_save { background: #4c6ef5; color: #fff; }
+                #${PANEL_ID} #qb_token_modal .qb_tm_later { background: #2c3345; color: #9aa3b8; }
                 #${PANEL_ID} .qb_robot_status { color: #8b93a7; font-size: 11px; margin: 6px 2px; }
                 #${PANEL_ID} .qb_copy_all {
                     cursor: pointer; user-select: none; color: #74c0fc;
@@ -764,6 +840,7 @@
                 <div class="qb_robot">
                     <input id="qb_robot_input" type="text" inputmode="numeric"
                            placeholder="Работы по роботу — номер без «a», напр. 1580" autocomplete="off">
+                    <span id="qb_token_btn" title="OAuth-токен Startrek (нужен для приоритетов)">🔑</span>
                     <span id="qb_robot_go">🔍</span>
                 </div>
                 <div id="qb_robot_results"></div>
