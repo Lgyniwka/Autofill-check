@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         QuickBase: Панель базы знаний (все сайты)
 // @namespace    https://github.com/Lgyniwka/Autofill-check/blob/main/src/QuickBase.user.js
-// @version      0.13.1
-// @description  Панель базы знаний. Работы по роботу: приоритет через st-api Startrek с OAuth-токеном (кнопка 🔑 — один раз вводишь токен, и кружки приоритетов появляются у тикетов). Копирование названий с эмодзи-кружками.
+// @version      0.13.2
+// @description  Панель базы знаний. Работы по роботу: приоритет через st-api с OAuth-токеном (🔑). Кружки и эмодзи при копировании приведены к одной шкале: красный блокер, оранжевый критичный, жёлтый средний (major/medium/normal).
 // @homepageURL  https://github.com/Lgyniwka/Autofill-check/blob/main/src/QuickBase.user.js
 // @supportURL   https://github.com/Lgyniwka/Autofill-check/blob/main/src/QuickBase.user.js
 // @updateURL    https://raw.githubusercontent.com/Lgyniwka/Autofill-check/main/src/QuickBase.user.js
@@ -491,7 +491,7 @@
                 e.stopPropagation();
                 // Каждая строка: цветной кружок (эмодзи) + название работы
                 GM_setClipboard(tasks.map((t) =>
-                    (PR_EMOJI[t.priority] || '⚪') + ' ' + t.summary
+                    (PR_EMOJI[priorityRank(t.priority)] || '⚪') + ' ' + t.summary
                 ).filter((line) => line.trim().length > 1).join('\n'));
                 const el = e.target;
                 el.textContent = '✅ Скопировано';
@@ -505,7 +505,7 @@
             });
 
             // Приоритет из Startrek API v2, fallback — парсинг HTML страницы тикета
-            const PR_EMOJI = { blocker: '🔴', critical: '🟠', major: '🟡' };
+            const PR_EMOJI = { red: '🔴', orange: '🟠', yellow: '🟡' };
             tasks.forEach((t, idx) => {
                 const dot = robotResults.querySelector(`[data-qb-pr="${idx}"]`);
                 const applyPr = (pr) => {
@@ -858,13 +858,21 @@
     }
 
     // Цвет приоритета: блокер — красный, критичный — оранжевый, средний — жёлтый, остальные — серый
-    function priorityColor(p) {
+    // Ранг приоритета: red = блокер, orange = критичный, yellow = средний, gray = остальное
+    function priorityRank(p) {
         const v = (p === undefined || p === null ? '' : String(p)).toLowerCase();
-        if (!v) return '#495057';
-        if (v.includes('blocker') || v.includes('блокер') || v === '5') return '#fa5252';      // красный
-        if (v.includes('crit') || v.includes('крит') || v === '4') return '#ff922b';           // оранжевый
-        if (v.includes('major') || v.includes('средн') || v.includes('med') || v === '3') return '#fcc419'; // жёлтый
-        return '#495057';
+        if (!v) return 'gray';
+        if (v.includes('blocker') || v.includes('блокер') || v === '5') return 'red';
+        if (v.includes('crit') || v.includes('крит') || v === '4' || v.includes('high') || v.includes('высок')) return 'orange';
+        if (v.includes('major') || v.includes('medium') || v.includes('med') || v.includes('normal')
+            || v.includes('средн') || v === '3') return 'yellow';
+        return 'gray';
+    }
+
+    const PR_COLORS = { red: '#fa5252', orange: '#ff922b', yellow: '#fcc419', gray: '#495057' };
+
+    function priorityColor(p) {
+        return PR_COLORS[priorityRank(p)];
     }
 
     function decode(str) {
