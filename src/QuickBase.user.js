@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         QuickBase: Панель базы знаний (все сайты)
 // @namespace    https://github.com/Lgyniwka/Autofill-check/blob/main/src/QuickBase.user.js
-// @version      0.10.2
-// @description  Панель базы знаний живёт рядом с сайтом. Работы по роботу: имя a{номер} → VIN (через /vehicles/) → открытые тикеты из issues API. Без горячих клавиш, вход кнопкой-ровером. Все секции свёрнуты по умолчанию.
+// @version      0.10.3
+// @description  Панель базы знаний. Работы по роботу (номер без «a»): список открытых тикетов + кнопка копирования названий всех работ (без дат/ключей). Без горячих клавиш, вход кнопкой-ровером. Все секции свёрнуты по умолчанию.
 // @homepageURL  https://github.com/Lgyniwka/Autofill-check/blob/main/src/QuickBase.user.js
 // @supportURL   https://github.com/Lgyniwka/Autofill-check/blob/main/src/QuickBase.user.js
 // @updateURL    https://raw.githubusercontent.com/Lgyniwka/Autofill-check/main/src/QuickBase.user.js
@@ -427,13 +427,21 @@
                 return;
             }
             robotResults.innerHTML =
-                '<div class="qb_robot_status">Открытых работ по a' + num + ': ' + tasks.length + '</div>' +
+                '<div class="qb_robot_status">Открытых работ по a' + num + ': ' + tasks.length +
+                ' <span class="qb_copy_all" title="Скопировать названия всех работ">⧉ копировать названия</span></div>' +
                 tasks.map((t) =>
                     `<div class="qb_task" data-qb-task="${encode(t)}">
                         <span class="qb_task_key">${t.key}</span>
                         <span class="qb_task_date">${t.created}</span>
                         <span class="qb_task_summary">${t.summary}</span>
                     </div>`).join('');
+            robotResults.querySelector('.qb_copy_all').addEventListener('click', (e) => {
+                e.stopPropagation();
+                GM_setClipboard(tasks.map((t) => t.summary).filter(Boolean).join('\n'));
+                const el = e.target;
+                el.textContent = '✅ Скопировано';
+                setTimeout(() => { el.textContent = '⧉ копировать названия'; }, 1200);
+            });
             robotResults.querySelectorAll('[data-qb-task]').forEach((el) => {
                 el.addEventListener('click', () => {
                     const t = decode(el.dataset.qbTask);
@@ -612,6 +620,12 @@
                 }
                 #${PANEL_ID} #qb_robot_go:hover { background: #262e40; }
                 #${PANEL_ID} .qb_robot_status { color: #8b93a7; font-size: 11px; margin: 6px 2px; }
+                #${PANEL_ID} .qb_copy_all {
+                    cursor: pointer; user-select: none; color: #74c0fc;
+                    background: #1d2330; border: 1px solid #2c3345; border-radius: 5px;
+                    padding: 1px 6px; margin-left: 6px;
+                }
+                #${PANEL_ID} .qb_copy_all:hover { background: #262e40; }
                 #${PANEL_ID} .qb_task {
                     display: flex; align-items: baseline; gap: 8px;
                     padding: 5px 8px; border-radius: 7px; cursor: pointer;
