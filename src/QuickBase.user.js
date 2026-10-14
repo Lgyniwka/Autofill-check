@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         QuickBase: Панель базы знаний (все сайты)
 // @namespace    https://github.com/Lgyniwka/Autofill-check/blob/main/src/QuickBase.user.js
-// @version      0.12.1
-// @description  Панель базы знаний. Работы по роботу: открытые тикеты, приоритет из Startrek (кружки: красный блокер, оранжевый критичный, жёлтый средний), копирование названий вместе с цветными кружками-эмодзи. Вход кнопкой-ровером.
+// @version      0.12.2
+// @description  Панель базы знаний. Работы по роботу: открытые тикеты, приоритет из Startrek API v2 (fallback — HTML тикета), кружки: красный блокер, оранжевый критичный, жёлтый средний; копирование названий с эмодзи-кружками.
 // @homepageURL  https://github.com/Lgyniwka/Autofill-check/blob/main/src/QuickBase.user.js
 // @supportURL   https://github.com/Lgyniwka/Autofill-check/blob/main/src/QuickBase.user.js
 // @updateURL    https://raw.githubusercontent.com/Lgyniwka/Autofill-check/main/src/QuickBase.user.js
@@ -455,24 +455,34 @@
                 });
             });
 
-            // Приоритет из Startrek
+            // Приоритет из Startrek API v2, fallback — парсинг HTML страницы тикета
             const PR_EMOJI = { blocker: '🔴', critical: '🟠', major: '🟡' };
             tasks.forEach((t, idx) => {
                 const dot = robotResults.querySelector(`[data-qb-pr="${idx}"]`);
+                const applyPr = (pr) => {
+                    t.priority = pr; // кружок учитывается и при копировании
+                    if (dot) {
+                        dot.style.background = priorityColor(pr);
+                        dot.title = 'Приоритет: ' + (pr || 'не найден');
+                    }
+                };
                 GM_xmlhttpRequest({
                     method: 'GET',
-                    url: 'https://st.yandex-team.ru/' + t.key,
+                    url: 'https://st.yandex-team.ru/api/v2/issues/' + t.key,
                     timeout: 20000,
+                    headers: { 'Accept': 'application/json' },
                     onload: (res) => {
                         let pr = '';
-                        const m = (res.responseText || '').match(/Bubble-priority_priority_([a-z]+)/)
-                            || (res.responseText || '').match(/Bubble-Icon_priority_([a-z]+)/);
-                        if (m) pr = m[1];
-                        t.priority = pr; // кружок учитывается и при копировании
-                        if (dot) {
-                            dot.style.background = priorityColor(pr);
-                            dot.title = 'Приоритет: ' + (pr || 'не найден');
+                        try {
+                            const issue = JSON.parse(res.responseText);
+                            pr = (issue && issue.priority && (issue.priority.key || issue.priority.display)) ? String(issue.priority.key || issue.priority.display).toLowerCase() : '';
+                        } catch (err) {
+                            // API не отдал JSON (например, редирект на авторизацию) — парсим HTML страницы тикета
+                            const m = (res.responseText || '').match(/Bubble-priority_priority_([a-z]+)/)
+                                || (res.responseText || '').match(/Bubble-Icon_priority_([a-z]+)/);
+                            if (m) pr = m[1];
                         }
+                        applyPr(pr);
                     },
                     onerror: () => { if (dot) dot.title = 'Приоритет: ошибка загрузки'; },
                     ontimeout: () => { if (dot) dot.title = 'Приоритет: таймаут'; },
