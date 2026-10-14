@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ST Ticket Self-Check
 // @namespace    http://tampermonkey.net/
-// @version      5.21
+// @version      5.22
 // @description  Самопроверка + форма учёта + комментарии. Переходы/поля/резолюция — через API Stracker
 // @author       You
 // @match        https://st.yandex-team.ru/*
@@ -637,10 +637,19 @@
     const PRESET_LABELS = {
         mic: 'Установка жгута микрофонов',
         battery: 'Замена коннекторов АКБ',
-        batteryCon: 'Замена жгута АКБ + КОН.'
+        batteryCon: 'Замена жгута АКБ + КОН.',
+        leafSprings: 'Замена рессор'
     };
 
-    async function runMicrophoneOrder(locationName, locationId, issueKey, preset, startedAt) {
+    // Компонент главного тикета по пресету заказа запчастей
+    const PRESET_COMPONENTS = {
+        mic: 162067,                 // ROBOT_ELECTRIC_WIRING
+        battery: 162067,
+        batteryCon: 162067,
+        leafSprings: 94651          // ROBOT_SUSPENSION
+    };
+
+    async function runMicrophoneOrder(locationName, locationId, issueKey, preset, startedAt, quantity) {
         startedAt = startedAt || Date.now();
         preset = preset || 'mic';
         const presetLabel = PRESET_LABELS[preset] || preset;
@@ -654,7 +663,7 @@
             try {
                 const today = new Date().toISOString().slice(0, 10);
                 await apiRequest('PATCH', `https://st-api.yandex-team.ru/v3/issues/${issueKey}`, {
-                    components: COMPONENT_IDS['ROBOT_ELECTRIC_WIRING'],
+                    components: PRESET_COMPONENTS[preset] || COMPONENT_IDS['ROBOT_ELECTRIC_WIRING'],
                     deadline: today
                 });
             } catch (e) {
@@ -681,6 +690,7 @@
             openUrl.searchParams.set('st_location', locationName);
             openUrl.searchParams.set('st_location_id', locationId || '');
             openUrl.searchParams.set('st_preset', preset);
+            if (quantity) openUrl.searchParams.set('st_qty', String(quantity));
 
             // Открываем в новом окне и ждём подтверждение AF_ORDER_DONE от AutoFill.
             const win = window.open(openUrl.href, '_blank');
@@ -1043,7 +1053,7 @@
         if (event.data.type === 'ST_HELPER_MICROPHONE_ORDER') {
             await sleep(1000);
             const p = (event.data.payload || {});
-            await runMicrophoneOrder(p.locationName, p.locationId, getTicketKey(), p.preset, p.startedAt);
+            await runMicrophoneOrder(p.locationName, p.locationId, getTicketKey(), p.preset, p.startedAt, p.quantity);
         }
 
         // ===== ППР-флоу (перенос из PPR Fast Fill) =====

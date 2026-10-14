@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Accounting Form AutoFill
 // @namespace    https://github.com/Lgyniwka/Autofill-check
-// @version      2.25
+// @version      2.26
 // @description  Плавающая панель + отправка комментария + переход статусов. Пресеты: QR, ППР (форма осмотра), жгут микрофонов, АКБ
 // @author       You
 // @match        https://tools.sdc.yandex-team.ru/accounting-fleet-works*
@@ -577,6 +577,12 @@
                 wikiText: '3.9 Battery Harness', qty: '1',
                 // + вторая позиция по кнопке «Ещё»: два переходника
                 extraRow: { wikiText: '3.9 Переходник для АКБ 1.5 Battery extender', qty: '2' }
+            },
+            // Замена рессор: кол-во динамическое (qtyOverride из st_qty),
+            // в комментарии и заказе — точное число рессор
+            leafSprings: {
+                seriesQuery: 'robot_suspension', seriesChip: 'ROBOT_SUSPENSION',
+                wikiText: 'Рессора для R 3.9  // НЕТ КОДА 1С //', qty: '1'
             }
         };
 
@@ -597,9 +603,10 @@
             });
         }
 
-        async function runSpareOrderForm(locationName, presetKey) {
+        async function runSpareOrderForm(locationName, presetKey, qtyOverride) {
             const preset = SPARE_PRESETS[presetKey] || SPARE_PRESETS.mic;
-            console.log('[AF] Заполняю форму заказа, пресет =', presetKey, 'локация =', locationName);
+            const qty = String(qtyOverride || preset.qty); // динамическое кол-во (рессоры)
+            console.log('[AF] Заполняю форму заказа, пресет =', presetKey, 'локация =', locationName, 'кол-во =', qty);
             try {
                 // Стр.1: Локация + Статус робота + СК + Тип ТМЦ, кнопка «Далее»
                 const locInput = await waitFor('#answer_wiki_9008987764243672', 12000);
@@ -671,7 +678,7 @@
                     console.warn('[AF] Поле «Вики» не найдено');
                 }
                 await new Promise(r => setTimeout(r, 400));
-                await setQuantity(preset.qty);
+                await setQuantity(qty);
 
                 // Вторая позиция ряда (пресет «+ КОН»): кнопка «Ещё» → новый ряд
                 // (id полей дублируются — берём ПОСЛЕДНИЕ Вики и Количество).
@@ -722,7 +729,7 @@
                 if (formBusy) { console.warn('[AF] Форма уже заполняется, пропуск.'); return; }
                 formBusy = true;
                 ev.source && ev.source.postMessage && ev.source.postMessage({ type: 'AF_ORDER_RECEIVED' }, '*');
-                runSpareOrderForm(d.payload.locationName, d.payload.preset);
+                runSpareOrderForm(d.payload.locationName, d.payload.preset, d.payload.quantity);
             }
         });
 
@@ -732,11 +739,12 @@
         const urlLoc = urlParams.get('st_location');
         if (urlLoc) {
             const presetKey = urlParams.get('st_preset') || 'mic';
-            console.log('[AF] Запуск из открытого окна, пресет =', presetKey, 'локация =', urlLoc);
+            const urlQty = urlParams.get('st_qty');
+            console.log('[AF] Запуск из открытого окна, пресет =', presetKey, 'локация =', urlLoc, 'кол-во =', urlQty);
             if (formBusy) { console.warn('[AF] Форма уже заполняется, пропуск.'); }
             else {
                 formBusy = true;
-                runSpareOrderForm(urlLoc, presetKey);
+                runSpareOrderForm(urlLoc, presetKey, urlQty);
             }
         }
 
@@ -760,6 +768,7 @@
             <button class="acp-btn" data-action="microphone">Установка жгута микрофонов</button>
             <button class="acp-btn" data-action="battery">Замена коннекторов АКБ</button>
             <button class="acp-btn" data-action="batteryCon">Замена жгута АКБ + КОН.</button>
+            <button class="acp-btn" data-action="leafSprings">Замена рессор</button>
         </div>
     `;
 
@@ -944,6 +953,40 @@
             const name = btn.dataset.loc;
             overlay.remove();
             onPick(name, SPARE_PART_LOCATIONS[name]);
+        });
+    }
+
+    // Универсальная модалка выбора из списка (для рессор: работа, кол-во)
+    function showPickModal(titleText, items, onPick) {
+        const overlay = document.createElement('div');
+        overlay.id = 'acp-pick-modal';
+        const list = items.map(i => `<button class="acp-loc-btn" data-v="${i}">${i}</button>`).join('');
+        overlay.innerHTML = `
+            <div class="acp-loc-box">
+                <div class="acp-loc-head"><span>${titleText}</span><button class="acp-loc-close">✕</button></div>
+                <div class="acp-loc-list">${list}</div>
+            </div>
+        `;
+        const style = document.createElement('style');
+        style.textContent = `
+            #acp-pick-modal { position: fixed; inset: 0; z-index: 999999; background: rgba(0,0,0,0.55); display: flex; align-items: center; justify-content: center; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }
+            #acp-pick-modal .acp-loc-box { background: #1f1f1f; color: #eee; border-radius: 12px; padding: 16px 18px; width: 360px; max-width: 92%; max-height: 80vh; display: flex; flex-direction: column; box-shadow: 0 8px 30px rgba(0,0,0,0.5); }
+            #acp-pick-modal .acp-loc-head { font-size: 14px; font-weight: 600; margin-bottom: 12px; display: flex; align-items: center; justify-content: space-between; }
+            #acp-pick-modal .acp-loc-close { background: none; border: none; color: #aaa; cursor: pointer; font-size: 16px; line-height: 1; }
+            #acp-pick-modal .acp-loc-close:hover { color: #fff; }
+            #acp-pick-modal .acp-loc-list { overflow: auto; display: flex; flex-direction: column; gap: 4px; }
+            #acp-pick-modal .acp-loc-btn { border: none; border-radius: 6px; padding: 8px 10px; background: #2a2a2a; color: #eee; font-size: 13px; text-align: left; cursor: pointer; }
+            #acp-pick-modal .acp-loc-btn:hover { background: #3b82f6; }
+        `;
+        document.head.appendChild(style);
+        document.body.appendChild(overlay);
+        overlay.querySelector('.acp-loc-close').addEventListener('click', () => overlay.remove());
+        overlay.addEventListener('click', e => {
+            const btn = e.target.closest('.acp-loc-btn');
+            if (!btn) return;
+            const val = btn.dataset.v;
+            overlay.remove();
+            onPick(val);
         });
     }
 
@@ -1133,6 +1176,29 @@
                             startedAt: pressTs
                         }
                     }, '*');
+                });
+            });
+        }
+        if (action === 'leafSprings') {
+            // Замена рессор: 1) работа в учёте (4 варианта), 2) точное кол-во
+            // для заказа (может не совпадать с работой — в учёте шаг 1/2/4/6),
+            // 3) локация. Комментарий «Заменили N рессор» — по заказному кол-ву.
+            showPickModal('Какая работа в учёте?', ['Замена 1 рессоры', 'Замена 2х рессор', 'Замена 4-х рессор', 'Замена 6-ти рессор'], workName => {
+                showPickModal('Сколько рессор заказываем?', ['1', '2', '3', '4', '5', '6'], quantity => {
+                    showLocationModal((locationName, locationId) => {
+                        doAction(btn, 'рессор', workName, 'Заменили ' + quantity + ' рессор', action, () => {
+                            window.parent.postMessage({
+                                type: 'ST_HELPER_MICROPHONE_ORDER',
+                                payload: {
+                                    locationName,
+                                    locationId,
+                                    preset: 'leafSprings',
+                                    quantity,
+                                    startedAt: pressTs
+                                }
+                            }, '*');
+                        });
+                    });
                 });
             });
         }
