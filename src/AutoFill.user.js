@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Accounting Form AutoFill
 // @namespace    https://github.com/Lgyniwka/Autofill-check
-// @version      2.27
+// @version      2.28
 // @description  Плавающая панель + отправка комментария + переход статусов. Пресеты: QR, ППР (форма осмотра), жгут микрофонов, АКБ
 // @author       You
 // @match        https://tools.sdc.yandex-team.ru/accounting-fleet-works*
@@ -619,8 +619,10 @@
                 if (!pickRadioByName('answer_one_answer_9008988226731508', '1788972002689', 'Не донор'))
                     await pickOption('Не донор');
                 await new Promise(r => setTimeout(r, 300));
-                if (!pickRadioByName('answer_one_answer_9008988226019256', '1788971284642', 'Нет'))
-                    await pickOption('Нет');
+                // Радио «Это СК» — теперь всегда «Да» (раньше «Нет»);
+                // id «Да»-опции не выверен, поэтому кликаем только по тексту.
+                const skPicked = await pickOptionIn(document, 'Да');
+                if (!skPicked) console.warn('[AF] Опция «Да» (Это СК) не найдена');
                 await new Promise(r => setTimeout(r, 300));
                 if (!pickRadioByName('answer_choices_1908101', '3179563', 'Запчасти'))
                     await pickOption('Запчасти');
