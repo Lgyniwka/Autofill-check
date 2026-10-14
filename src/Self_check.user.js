@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ST Ticket Self-Check
 // @namespace    http://tampermonkey.net/
-// @version      5.20
+// @version      5.21
 // @description  Самопроверка + форма учёта + комментарии. Переходы/поля/резолюция — через API Stracker
 // @author       You
 // @match        https://st.yandex-team.ru/*
@@ -1069,6 +1069,27 @@
         // Форма ППР отправлена — продолжаем в тикете
         if (event.data.type === 'AF_PPR_DONE') {
             if (pprDoneResolve) pprDoneResolve();
+        }
+
+        // Консольная утилита: полный список компонентов очереди.
+        // Вызов из консоли DevTools на странице st.yandex-team.ru:
+        //   window.postMessage({ type: 'ST_LIST_COMPONENTS' }, '*');
+        // Опционально фильтр: { type: 'ST_LIST_COMPONENTS', filter: 'robot' }
+        if (event.data.type === 'ST_LIST_COMPONENTS') {
+            try {
+                const r = await apiRequest('GET', 'https://st-api.yandex-team.ru/v2/queues/SDCFLEETOPS/components');
+                const list = (r.data && Array.isArray(r.data)) ? r.data : [];
+                const flt = (event.data.filter || '').toLowerCase();
+                const rows = list
+                    .filter(c => !flt || String(c.name || '').toLowerCase().includes(flt))
+                    .map(c => ({ id: c.id, name: c.name, key: c.key || '' }));
+                console.log('[ST] Компоненты SDCFLEETOPS (' + rows.length + ' из ' + list.length + '):');
+                console.table(rows);
+                console.log('[ST] Справочник для COMPONENT_IDS:\n' +
+                    rows.map(c => `'${c.name}': ${c.id},`).join('\n'));
+            } catch (e) {
+                console.warn('[ST] Не получил компоненты:', e.status, String(e.text || '').slice(0, 300));
+            }
         }
     });
 
