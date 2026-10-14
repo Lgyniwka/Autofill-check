@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         QuickBase: Панель базы знаний (все сайты)
 // @namespace    https://github.com/Lgyniwka/Autofill-check/blob/main/src/QuickBase.user.js
-// @version      0.8.1
-// @description  Панель базы знаний живёт рядом с сайтом. Сворачиваемые: заголовки секций (Инструкции/Информация/Ссылки — состояние запоминается) и все строки с доп. данными (логин/пароль/details с копированием). Кнопка-ровер — полупрозрачная, тащится, ПКМ — скрыть.
+// @version      0.9.0
+// @description  Панель базы знаний живёт рядом с сайтом. Без горячих клавиш — вход только кнопкой-ровером, закрытие крестиком. По умолчанию все секции свёрнуты. Сворачиваемые секции и строки с доп. данными (копирование внутри).
 // @homepageURL  https://github.com/Lgyniwka/Autofill-check/blob/main/src/QuickBase.user.js
 // @supportURL   https://github.com/Lgyniwka/Autofill-check/blob/main/src/QuickBase.user.js
 // @updateURL    https://raw.githubusercontent.com/Lgyniwka/Autofill-check/main/src/QuickBase.user.js
@@ -87,31 +87,6 @@
     const PANEL_Z = 2147483000;
 
     let panel = null;
-
-    function matchesHotkey(e) {
-        // macOS: Cmd+Shift+Ё — Cmd+Ё перехватывается системой (переключение окон).
-        // Запасной вариант везде: Ctrl+Ё (Windows: Ctrl+~), системой не занимается.
-        const isMac = navigator.platform.toUpperCase().indexOf('MAC') >= 0;
-        if (isMac && e.metaKey && e.shiftKey && e.code === 'Backquote' && !e.altKey && !e.ctrlKey) return true;
-        if (!isMac && e.ctrlKey && e.code === 'Backquote' && !e.altKey && !e.shiftKey && !e.metaKey) return true;
-        // Ctrl+Ё работает и на macOS как запасной
-        if (e.ctrlKey && e.code === 'Backquote' && !e.altKey && !e.shiftKey && !e.metaKey) return true;
-        return false;
-    }
-
-    function onKeydown(e) {
-        if (e.code === 'Escape' && panel) {
-            e.preventDefault();
-            e.stopPropagation();
-            closePanel();
-            return;
-        }
-        if (matchesHotkey(e)) {
-            e.preventDefault();
-            e.stopPropagation();
-            togglePanel();
-        }
-    }
 
     function togglePanel() {
         if (panel) closePanel();
@@ -324,7 +299,7 @@
         const head = panel.querySelector('.qb_head');
         let pdrag = null;
         head.addEventListener('pointerdown', (e) => {
-            if (e.target.closest('.qb_kbd')) return; // подсказку не хватает
+            if (e.target.closest('.qb_close')) return; // крестик не хватает
             pdrag = { startX: e.clientX, startY: e.clientY, x: ppos.x, y: ppos.y };
             head.setPointerCapture(e.pointerId);
             e.preventDefault();
@@ -381,21 +356,21 @@
             }
         });
 
-        // Клик по заголовку секции — свернуть/развернуть (запоминается)
-        const COLLAPSED_KEY = 'qb_collapsed_sections';
-        const loadCollapsed = () => {
-            try { return new Set(JSON.parse(localStorage.getItem(COLLAPSED_KEY)) || []); }
+        // Клик по заголовку секции — развернуть/свернуть.
+        // По умолчанию ВСЁ свёрнуто; запоминаются только развёрнутые.
+        const EXPANDED_KEY = 'qb_expanded_sections';
+        const loadExpanded = () => {
+            try { return new Set(JSON.parse(localStorage.getItem(EXPANDED_KEY)) || []); }
             catch (e) { return new Set(); }
         };
-        const saveCollapsed = (set) => {
-            try { localStorage.setItem(COLLAPSED_KEY, JSON.stringify([...set])); } catch (err) { /* ignore */ }
+        const saveExpanded = (set) => {
+            try { localStorage.setItem(EXPANDED_KEY, JSON.stringify([...set])); } catch (err) { /* ignore */ }
         };
         panel.querySelectorAll('[data-qb-section]').forEach((sec) => {
             const title = sec.querySelector('[data-qb-section-toggle]');
             const body = sec.querySelector('.qb_section_body');
             const name = sec.dataset.qbTitle;
-            const collapsed = loadCollapsed();
-            if (collapsed.has(name)) {
+            if (!loadExpanded().has(name)) {
                 body.style.display = 'none';
                 title.querySelector('.qb_expand').textContent = '▸';
             }
@@ -403,9 +378,9 @@
                 const isCollapsed = body.style.display === 'none';
                 body.style.display = isCollapsed ? '' : 'none';
                 title.querySelector('.qb_expand').textContent = isCollapsed ? '▾' : '▸';
-                const set = loadCollapsed();
-                if (isCollapsed) set.delete(name); else set.add(name);
-                saveCollapsed(set);
+                const set = loadExpanded();
+                if (isCollapsed) set.add(name); else set.delete(name);
+                saveExpanded(set);
             });
         });
 
@@ -493,16 +468,11 @@
                 }
                 #${PANEL_ID} .qb_head:hover { background: #1d2330; }
                 #${PANEL_ID} .qb_close {
-                    cursor: pointer; color: #8b93a7; font-size: 12px;
+                    margin-left: auto; cursor: pointer; color: #8b93a7; font-size: 12px;
                     padding: 2px 7px; border-radius: 5px; flex: none;
                 }
                 #${PANEL_ID} .qb_close:hover { color: #fff; background: #c92a2a; }
                 #${PANEL_ID} .qb_title { font-weight: 700; font-size: 13px; }
-                #${PANEL_ID} .qb_kbd {
-                    margin-left: auto; font-size: 9px; color: #8b93a7;
-                    background: #1d2330; border: 1px solid #2c3345;
-                    border-radius: 5px; padding: 2px 5px; white-space: nowrap;
-                }
                 #${PANEL_ID} input#qb_search {
                     flex: 1; box-sizing: border-box;
                     background: #0f131c; color: #e6e9f0;
@@ -562,7 +532,6 @@
             <div class="qb_box">
                 <div class="qb_head">
                     <span class="qb_title">⚡ QuickBase — база знаний</span>
-                    <span class="qb_kbd">${isMacOS() ? 'Cmd+Shift+Ё · Ctrl+Ё / Esc' : 'Ctrl+~ / Esc'}</span>
                     <span class="qb_close" title="Закрыть">✕</span>
                 </div>
                 <input id="qb_search" type="text" placeholder="Поиск по разделам и работам…" autocomplete="off">
@@ -587,8 +556,8 @@
 
     function applyFilter(q) {
         q = q.trim().toLowerCase();
-        const loadCollapsed = () => {
-            try { return new Set(JSON.parse(localStorage.getItem('qb_collapsed_sections')) || []); }
+        const loadExpanded = () => {
+            try { return new Set(JSON.parse(localStorage.getItem('qb_expanded_sections')) || []); }
             catch (e) { return new Set(); }
         };
         const sections = panel.querySelectorAll('[data-qb-section]');
@@ -618,7 +587,7 @@
                 body.style.display = '';
                 if (arrow) arrow.textContent = '▾';
             } else if (!q) {
-                const isCollapsed = loadCollapsed().has(sec.dataset.qbTitle);
+                const isCollapsed = !loadExpanded().has(sec.dataset.qbTitle);
                 body.style.display = isCollapsed ? 'none' : '';
                 if (arrow) arrow.textContent = isCollapsed ? '▸' : '▾';
             }
@@ -641,14 +610,5 @@
         }, 1200);
     }
 
-    function isMacOS() {
-        return navigator.platform.toUpperCase().indexOf('MAC') >= 0;
-    }
-
-    // Глобальный перехват на capture-фазе — раньше обработчиков страницы
-    window.addEventListener('keydown', onKeydown, true);
-    document.addEventListener('keydown', onKeydown, true);
-
-    // Плавающая кнопка-ровер (fallback хоткея)
     createFloatButton();
 })();
