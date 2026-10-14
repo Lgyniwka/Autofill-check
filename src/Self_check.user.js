@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ST Ticket Self-Check
 // @namespace    http://tampermonkey.net/
-// @version      5.22
+// @version      5.23
 // @description  Самопроверка + форма учёта + комментарии. Переходы/поля/резолюция — через API Stracker
 // @author       You
 // @match        https://st.yandex-team.ru/*
@@ -649,10 +649,12 @@
         leafSprings: 94651          // ROBOT_SUSPENSION
     };
 
-    async function runMicrophoneOrder(locationName, locationId, issueKey, preset, startedAt, quantity) {
+    async function runMicrophoneOrder(locationName, locationId, issueKey, preset, startedAt, quantity, opts) {
         startedAt = startedAt || Date.now();
         preset = preset || 'mic';
+        opts = opts || {};
         const presetLabel = PRESET_LABELS[preset] || preset;
+        if (opts.isBlocker) console.log('[ST] Блокер: пока флоу без изменений; закрытие тикета на осмотр — TODO');
         if (!OAUTH_TOKEN) { showTokenModal(); return; }
         if (!issueKey) { console.warn('[ST] Тикет не определён для заказа жгута'); showToast('Не определён тикет'); return; }
 
@@ -712,7 +714,8 @@
             await runTransition(issueKey, 'inProgress');     // treated -> inProgress (Взять в работу)
             await setSolutionViaApi(issueKey, 'CHANGE');
             await runTransition(issueKey, 'check');
-            await setDefectCodeApi(issueKey, '0');
+            // Код дефекта: передан с панели (рессоры: CH-01..CH-05) или '0'
+            await setDefectCodeApi(issueKey, opts.defectCode ? opts.defectCode.split(' - ')[0] : '0');
             await runTransition(issueKey, ['closed', 'closedMeta'], 10000, { resolution: 'fixed' });
             const elapsedSec = ((Date.now() - startedAt) / 1000).toFixed(1);
             showToast(presetLabel + ': закрыт за ' + elapsedSec + ' сек', 7000);
@@ -1053,7 +1056,7 @@
         if (event.data.type === 'ST_HELPER_MICROPHONE_ORDER') {
             await sleep(1000);
             const p = (event.data.payload || {});
-            await runMicrophoneOrder(p.locationName, p.locationId, getTicketKey(), p.preset, p.startedAt, p.quantity);
+            await runMicrophoneOrder(p.locationName, p.locationId, getTicketKey(), p.preset, p.startedAt, p.quantity, { isBlocker: p.isBlocker, defectCode: p.defectCode });
         }
 
         // ===== ППР-флоу (перенос из PPR Fast Fill) =====
