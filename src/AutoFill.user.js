@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Accounting Form AutoFill
 // @namespace    https://github.com/Lgyniwka/Autofill-check
-// @version      2.28
+// @version      2.29
 // @description  Плавающая панель + отправка комментария + переход статусов. Пресеты: QR, ППР (форма осмотра), жгут микрофонов, АКБ
 // @author       You
 // @match        https://tools.sdc.yandex-team.ru/accounting-fleet-works*
