@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Accounting Form AutoFill
 // @namespace    https://github.com/Lgyniwka/Autofill-check
-// @version      2.31
+// @version      2.32
 // @description  Плавающая панель + отправка комментария + переход статусов. Пресеты: QR, ППР (форма осмотра), жгут микрофонов, АКБ
 // @author       You
 // @match        https://tools.sdc.yandex-team.ru/accounting-fleet-works*
@@ -1040,7 +1040,9 @@
             const items = document.querySelectorAll('.WorkSuggestItem-Name');
 
             for (const item of items) {
-                if (item.textContent.includes(matchText)) {
+                // Регистронезависимый матч: в саджесте «Замена флажка в сборе»,
+                // а matchText может быть с маленькой буквы.
+                if (item.textContent.toLowerCase().includes(matchText.toLowerCase())) {
                     item.click();
                     clearInterval(timer);
 
