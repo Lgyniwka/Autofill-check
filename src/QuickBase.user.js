@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         QuickBase: Панель базы знаний (все сайты)
 // @namespace    https://github.com/Lgyniwka/Autofill-check/blob/main/src/QuickBase.user.js
-// @version      0.12.2
-// @description  Панель базы знаний. Работы по роботу: открытые тикеты, приоритет из Startrek API v2 (fallback — HTML тикета), кружки: красный блокер, оранжевый критичный, жёлтый средний; копирование названий с эмодзи-кружками.
+// @version      0.12.3
+// @description  Панель базы знаний. Работы по роботу: приоритет из Startrek API v2 с диагностикой в консоль ([QuickBase] приоритет …), fallback — HTML тикета. Кружки: красный блокер, оранжевый критичный, жёлтый средний; копирование названий с эмодзи-кружками.
 // @homepageURL  https://github.com/Lgyniwka/Autofill-check/blob/main/src/QuickBase.user.js
 // @supportURL   https://github.com/Lgyniwka/Autofill-check/blob/main/src/QuickBase.user.js
 // @updateURL    https://raw.githubusercontent.com/Lgyniwka/Autofill-check/main/src/QuickBase.user.js
@@ -476,12 +476,15 @@
                         try {
                             const issue = JSON.parse(res.responseText);
                             pr = (issue && issue.priority && (issue.priority.key || issue.priority.display)) ? String(issue.priority.key || issue.priority.display).toLowerCase() : '';
+                            console.log('[QuickBase] приоритет ' + t.key + ':', JSON.stringify(issue && issue.priority), '| HTTP', res.status);
                         } catch (err) {
+                            console.log('[QuickBase] приоритет ' + t.key + ': не JSON, HTTP', res.status, '|', (res.responseText || '').slice(0, 200));
                             // API не отдал JSON (например, редирект на авторизацию) — парсим HTML страницы тикета
                             const m = (res.responseText || '').match(/Bubble-priority_priority_([a-z]+)/)
                                 || (res.responseText || '').match(/Bubble-Icon_priority_([a-z]+)/);
                             if (m) pr = m[1];
                         }
+                        if (!pr && dot) dot.title = 'Приоритет: HTTP ' + res.status + ' (см. консоль)';
                         applyPr(pr);
                     },
                     onerror: () => { if (dot) dot.title = 'Приоритет: ошибка загрузки'; },
