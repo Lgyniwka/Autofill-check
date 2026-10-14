@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         QuickBase: Панель базы знаний (все сайты)
 // @namespace    https://github.com/Lgyniwka/Autofill-check/blob/main/src/QuickBase.user.js
-// @version      0.10.3
-// @description  Панель базы знаний. Работы по роботу (номер без «a»): список открытых тикетов + кнопка копирования названий всех работ (без дат/ключей). Без горячих клавиш, вход кнопкой-ровером. Все секции свёрнуты по умолчанию.
+// @version      0.11.0
+// @description  Панель базы знаний. Работы по роботу: список открытых тикетов с кружком приоритета (красный — блокер, оранжевый — критичный, жёлтый — средний), кнопка копирования названий. Вход кнопкой-ровером, секции свёрнуты по умолчанию.
 // @homepageURL  https://github.com/Lgyniwka/Autofill-check/blob/main/src/QuickBase.user.js
 // @supportURL   https://github.com/Lgyniwka/Autofill-check/blob/main/src/QuickBase.user.js
 // @updateURL    https://raw.githubusercontent.com/Lgyniwka/Autofill-check/main/src/QuickBase.user.js
@@ -419,6 +419,7 @@
                     link: link,
                     summary: it.summary || it.name || it.title || '',
                     created: (it.created || it.created_at || '').toString().slice(0, 10),
+                    priority: it.priority || (it.ticket && it.ticket.priority) || it.startrek_priority || '',
                 };
             }).filter((t) => t.key);
 
@@ -431,6 +432,7 @@
                 ' <span class="qb_copy_all" title="Скопировать названия всех работ">⧉ копировать названия</span></div>' +
                 tasks.map((t) =>
                     `<div class="qb_task" data-qb-task="${encode(t)}">
+                        <span class="qb_task_pr" style="background:${priorityColor(t.priority)}" title="Приоритет: ${t.priority || '—'}"></span>
                         <span class="qb_task_key">${t.key}</span>
                         <span class="qb_task_date">${t.created}</span>
                         <span class="qb_task_summary">${t.summary}</span>
@@ -633,6 +635,10 @@
                 }
                 #${PANEL_ID} .qb_task:hover { background: #1d2330; border-color: #2c3345; }
                 #${PANEL_ID} .qb_task_key { font-weight: 700; font-size: 11px; color: #74c0fc; white-space: nowrap; }
+                #${PANEL_ID} .qb_task_pr {
+                    flex: none; width: 9px; height: 9px; border-radius: 50%;
+                    background: #495057; align-self: center;
+                }
                 #${PANEL_ID} .qb_task_date { font-size: 10px; color: #6e7890; white-space: nowrap; }
                 #${PANEL_ID} .qb_task_summary { font-size: 11.5px; color: #e6e9f0; }
                 #${PANEL_ID} .qb_section { margin-top: 8px; }
@@ -704,6 +710,16 @@
     function encode(obj) {
         return btoa(unescape(encodeURIComponent(JSON.stringify(obj))))
             .replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+    }
+
+    // Цвет приоритета: блокер — красный, критичный — оранжевый, средний — жёлтый, остальные — серый
+    function priorityColor(p) {
+        const v = (p === undefined || p === null ? '' : String(p)).toLowerCase();
+        if (!v) return '#495057';
+        if (v.includes('blocker') || v.includes('блокер') || v === '5') return '#fa5252';      // красный
+        if (v.includes('crit') || v.includes('крит') || v === '4') return '#ff922b';           // оранжевый
+        if (v.includes('major') || v.includes('средн') || v.includes('med') || v === '3') return '#fcc419'; // жёлтый
+        return '#495057';
     }
 
     function decode(str) {
