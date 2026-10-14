@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ST Ticket Self-Check
 // @namespace    http://tampermonkey.net/
-// @version      5.25
+// @version      5.26
 // @description  Самопроверка + форма учёта + комментарии. Переходы/поля/резолюция — через API Stracker
 // @author       You
 // @match        https://st.yandex-team.ru/*
@@ -255,6 +255,7 @@
     // дополнительно можно перечислить имена переходов (ru/en display) и id транзишена.
     async function runTransition(issueKey, accept, timeoutMs = 10000, body) {
         if (!OAUTH_TOKEN) { showTokenModal(); return false; }
+        const names = Array.isArray(accept) ? accept : [accept];
         const start = Date.now();
         while (Date.now() - start < timeoutMs) {
             const list = await getTransitions(issueKey);
@@ -731,8 +732,8 @@
             const elapsedSec = ((Date.now() - startedAt) / 1000).toFixed(1);
             showToast(presetLabel + ': закрыт за ' + elapsedSec + ' сек', 7000);
         } catch (e) {
-            console.warn('[ST] Ошибка заказа запчастей:', e.status, String(e.text || '').slice(0, 500));
-            showToast('Не удалось создать заказ запчастей: ' + String(e.status || 'err'), 7000);
+            console.warn('[ST] Ошибка заказа запчастей:', e && (e.stack || e.message || e), e.status || '', String(e.text || '').slice(0, 300));
+            showToast('Не удалось создать заказ запчастей: ' + String(e && (e.status || e.message) || 'err'), 7000);
         }
     }
 
