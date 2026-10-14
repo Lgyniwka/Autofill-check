@@ -1,11 +1,12 @@
 // ==UserScript==
 // @name         Rover ID Switcher
 // @namespace    http://tampermonkey.net/
-// @version      1.6
-// @description  Быстрая смена номера ровера → всегда на /maintenance
+// @version      1.7
+// @description  Быстрая смена номера ровера → tools: всегда /maintenance; launcher: смена поддомена
 // @author       You
 // @match        https://tools.sdc.yandex-team.ru/rovers/*
 // @match        https://tools.sdc.yandex-team.ru/rovers-old/*
+// @match        https://*.launcher.sdc.yandex-team.ru/*
 // @grant        none
 // @downloadURL  https://raw.githubusercontent.com/Lgyniwka/Autofill-check/main/src/Rover ID Switcher-1.4.user.js
 // @updateURL    https://raw.githubusercontent.com/Lgyniwka/Autofill-check/main/src/Rover ID Switcher-1.4.user.js
@@ -49,14 +50,19 @@
                 if (!digits) return;
 
                 const newId = 'a' + digits;
+                let newUrl;
 
-                // Определяем, rovers или rovers-old
-                const base = location.pathname.includes('/rovers-old/')
-                    ? '/rovers-old/'
-                    : '/rovers/';
-
-                // Всегда уходим на /maintenance
-                const newUrl = `https://tools.sdc.yandex-team.ru${base}${newId}/maintenance`;
+                if (location.hostname.endsWith('.launcher.sdc.yandex-team.ru')) {
+                    // Лаунчер: номер ровера — это поддомен (a1055.launcher...)
+                    // Путь и параметры сохраняем, меняем только поддомен.
+                    newUrl = `https://${newId}.launcher.sdc.yandex-team.ru${location.pathname}${location.search}`;
+                } else {
+                    // tools: определяем, rovers или rovers-old, уходим на /maintenance
+                    const base = location.pathname.includes('/rovers-old/')
+                        ? '/rovers-old/'
+                        : '/rovers/';
+                    newUrl = `https://tools.sdc.yandex-team.ru${base}${newId}/maintenance`;
+                }
 
                 location.href = newUrl;
             }
