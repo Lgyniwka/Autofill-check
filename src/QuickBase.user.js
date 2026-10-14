@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         QuickBase: Панель базы знаний (все сайты)
 // @namespace    https://github.com/Lgyniwka/Autofill-check/blob/main/src/QuickBase.user.js
-// @version      0.10.1
-// @description  Панель базы знаний живёт рядом с сайтом. Поиск открытых работ по роботу — из JSON API tools.sdc (а не SPA-страницы), номер без «a», тикеты кликабельны. Без горячих клавиш, вход кнопкой-ровером. Все секции свёрнуты по умолчанию.
+// @version      0.10.2
+// @description  Панель базы знаний живёт рядом с сайтом. Работы по роботу: имя a{номер} → VIN (через /vehicles/) → открытые тикеты из issues API. Без горячих клавиш, вход кнопкой-ровером. Все секции свёрнуты по умолчанию.
 // @homepageURL  https://github.com/Lgyniwka/Autofill-check/blob/main/src/QuickBase.user.js
 // @supportURL   https://github.com/Lgyniwka/Autofill-check/blob/main/src/QuickBase.user.js
 // @updateURL    https://raw.githubusercontent.com/Lgyniwka/Autofill-check/main/src/QuickBase.user.js
@@ -350,13 +350,41 @@
                 robotResults.innerHTML = '<div class="qb_robot_status">Введи номер робота, например 1580</div>';
                 return;
             }
-            robotResults.innerHTML = '<div class="qb_robot_status">Загружаю работы по a' + num + '…</div>';
+            const API = 'https://tools.sdc.yandex-team.ru/api';
+            robotResults.innerHTML = '<div class="qb_robot_status">Ищу a' + num + '…</div>';
+
+            // Шаг 1: имя a{num} -> VIN (/vehicles/?name=)
             GM_xmlhttpRequest({
                 method: 'GET',
-                url: 'https://tools.sdc.yandex-team.ru/api/rovers/a' + num + '/issues/',
+                url: API + '/vehicles/?name=a' + num,
                 timeout: 15000,
                 headers: { 'Accept': 'application/json' },
-                onload: (res) => renderRobotTasks(num, res.responseText, res.status),
+                onload: (res) => {
+                    let data;
+                    try { data = JSON.parse(res.responseText); } catch (err) { data = null; }
+                    const rover = data && Array.isArray(data.results)
+                        ? data.results.find((r) => (r.name || '').toLowerCase() === ('a' + num).toLowerCase()) || data.results[0]
+                        : null;
+                    if (!rover || !rover.vin) {
+                        robotResults.innerHTML = '<div class="qb_robot_status">⚠ Робот a' + num + ' не найден (HTTP ' + res.status + ')</div>';
+                        return;
+                    }
+                    // Шаг 2: работы по VIN
+                    robotResults.innerHTML = '<div class="qb_robot_status">Загружаю работы по a' + num + ' (' + rover.vin + ')…</div>';
+                    GM_xmlhttpRequest({
+                        method: 'GET',
+                        url: API + '/rovers/' + rover.vin + '/issues/',
+                        timeout: 15000,
+                        headers: { 'Accept': 'application/json' },
+                        onload: (res2) => renderRobotTasks(num, res2.responseText, res2.status),
+                        onerror: () => {
+                            robotResults.innerHTML = '<div class="qb_robot_status">⚠ Не удалось загрузить (сеть)</div>';
+                        },
+                        ontimeout: () => {
+                            robotResults.innerHTML = '<div class="qb_robot_status">⚠ Таймаут запроса</div>';
+                        },
+                    });
+                },
                 onerror: () => {
                     robotResults.innerHTML = '<div class="qb_robot_status">⚠ Не удалось загрузить (сеть)</div>';
                 },
