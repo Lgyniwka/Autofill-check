@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         QuickBase: Панель базы знаний (все сайты)
 // @namespace    https://github.com/Lgyniwka/Autofill-check/blob/main/src/QuickBase.user.js
-// @version      0.13.0
-// @description  Панель базы знаний. Работы по роботу: приоритет через st-api Startrek с OAuth-токеном (кнопка 🔑 — тот же токен, что в Self_check), fallback — HTML тикета. Кружки приоритетов + копирование названий с эмодзи.
+// @version      0.13.1
+// @description  Панель базы знаний. Работы по роботу: приоритет через st-api Startrek с OAuth-токеном (кнопка 🔑 — один раз вводишь токен, и кружки приоритетов появляются у тикетов). Копирование названий с эмодзи-кружками.
 // @homepageURL  https://github.com/Lgyniwka/Autofill-check/blob/main/src/QuickBase.user.js
 // @supportURL   https://github.com/Lgyniwka/Autofill-check/blob/main/src/QuickBase.user.js
 // @updateURL    https://raw.githubusercontent.com/Lgyniwka/Autofill-check/main/src/QuickBase.user.js
@@ -362,16 +362,18 @@
                 <div id="qb_token_modal">
                     <div class="qb_tm_title">OAuth-токен Startrek</div>
                     <div class="qb_tm_text">
-                        Нужен, чтобы подтягивать приоритеты работ (API st-api.yandex-team.ru).<br>
+                        Введи токен <b>один раз</b> — и приоритеты будут показываться кружками рядом
+                        с названиями тикетов (красный — блокер, оранжевый — критичный, жёлтый — средний).<br>
                         Тот же токен, что в Self_check. <a href="${TOKEN_URL}" target="_blank">Получить токен</a>
                     </div>
-                    <input type="password" placeholder="Вставь access_token…" autocomplete="off">
+                    <input type="password" placeholder="Вставь access_token (один раз и навсегда)…" autocomplete="off">
                     <div class="qb_tm_actions">
                         <button class="qb_tm_save">Сохранить</button>
                         <button class="qb_tm_later">Позже</button>
                     </div>
                 </div>`;
-            panel.appendChild(overlay);
+            const box = panel.querySelector('.qb_box');
+            box.appendChild(overlay);
             const tInput = overlay.querySelector('input');
             tInput.focus();
             overlay.querySelector('.qb_tm_save').addEventListener('click', () => {
@@ -742,6 +744,7 @@
                 #${PANEL_ID} #qb_token_modal_overlay {
                     position: fixed; inset: 0; z-index: ${PANEL_Z + 1};
                     background: rgba(0,0,0,.55); display: flex; align-items: center; justify-content: center;
+                    pointer-events: auto;
                 }
                 #${PANEL_ID} #qb_token_modal {
                     background: #161a23; color: #e6e9f0; border: 1px solid #2c3345; border-radius: 12px;
