@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ST Ticket Self-Check
 // @namespace    http://tampermonkey.net/
-// @version      5.24
+// @version      5.25
 // @description  Самопроверка + форма учёта + комментарии. Переходы/поля/резолюция — через API Stracker
 // @author       You
 // @match        https://st.yandex-team.ru/*
@@ -641,7 +641,8 @@
         mic: 'Установка жгута микрофонов',
         battery: 'Замена коннекторов АКБ',
         batteryCon: 'Замена жгута АКБ + КОН.',
-        leafSprings: 'Замена рессор'
+        leafSprings: 'Замена рессор',
+        flag: 'Замена флажка'
     };
 
     // Компонент главного тикета по пресету заказа запчастей
@@ -649,7 +650,13 @@
         mic: 162067,                 // ROBOT_ELECTRIC_WIRING
         battery: 162067,
         batteryCon: 162067,
-        leafSprings: 94651          // ROBOT_SUSPENSION
+        leafSprings: 94651,          // ROBOT_SUSPENSION
+        flag: 94609                  // ROBOT_BODY_FLAG
+    };
+
+    // Код дефекта по умолчанию по пресету (если не передан с панели)
+    const PRESET_DEFECTS = {
+        flag: 'BD-02'
     };
 
     async function runMicrophoneOrder(locationName, locationId, issueKey, preset, startedAt, quantity, opts) {
@@ -717,8 +724,9 @@
             await runTransition(issueKey, 'inProgress');     // treated -> inProgress (Взять в работу)
             await setSolutionViaApi(issueKey, 'CHANGE');
             await runTransition(issueKey, 'check');
-            // Код дефекта: передан с панели (рессоры: CH-01..CH-05) или '0'
-            await setDefectCodeApi(issueKey, opts.defectCode ? opts.defectCode.split(' - ')[0] : '0');
+            // Код дефекта: с панели (рессоры CH-01..CH-05), из PRESET_DEFECTS
+            // (флажок BD-02) или '0'
+            await setDefectCodeApi(issueKey, opts.defectCode ? opts.defectCode.split(' - ')[0] : (PRESET_DEFECTS[preset] || '0'));
             await runTransition(issueKey, ['closed', 'closedMeta'], 10000, { resolution: 'fixed' });
             const elapsedSec = ((Date.now() - startedAt) / 1000).toFixed(1);
             showToast(presetLabel + ': закрыт за ' + elapsedSec + ' сек', 7000);

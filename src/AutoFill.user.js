@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Accounting Form AutoFill
 // @namespace    https://github.com/Lgyniwka/Autofill-check
-// @version      2.29
+// @version      2.30
 // @description  Плавающая панель + отправка комментария + переход статусов. Пресеты: QR, ППР (форма осмотра), жгут микрофонов, АКБ
 // @author       You
 // @match        https://tools.sdc.yandex-team.ru/accounting-fleet-works*
@@ -578,6 +578,11 @@
                 // + вторая позиция по кнопке «Ещё»: два переходника
                 extraRow: { wikiText: '3.9 Переходник для АКБ 1.5 Battery extender', qty: '2' }
             },
+            // Замена флажка: серия body_flag -> ROBOT_BODY_FLAG, ТМЦ 1 шт.
+            flag: {
+                seriesQuery: 'body_flag', seriesChip: 'ROBOT_BODY_FLAG',
+                wikiText: '3.9 Флажок в сборе // 900671 // 3640130XNU60A', qty: '1'
+            },
             // Замена рессор: кол-во динамическое (qtyOverride из st_qty),
             // в комментарии и заказе — точное число рессор
             leafSprings: {
@@ -770,6 +775,7 @@
             <button class="acp-btn" data-action="logsdump">Слив логов</button>
             <button class="acp-btn" data-action="ppr">ППР робота</button>
             <button class="acp-btn" data-action="microphone">Установка жгута микрофонов</button>
+            <button class="acp-btn" data-action="flag">Замена флажка</button>
             <button class="acp-btn" data-action="battery">Замена коннекторов АКБ</button>
             <button class="acp-btn" data-action="batteryCon">Замена жгута АКБ + КОН.</button>
             <button class="acp-btn" data-action="leafSprings">Замена рессор</button>
@@ -1171,6 +1177,22 @@
                             locationName,
                             locationId,
                             preset: 'mic',
+                            startedAt: pressTs
+                        }
+                    }, '*');
+                });
+            });
+        }
+        if (action === 'flag') {
+            // Замена флажка: как жгут микрофонов — локация, работа, заказ, закрытие
+            showLocationModal((locationName, locationId) => {
+                doAction(btn, 'флажка', 'замена флажка в сборе', 'Заменили флажок в сборе', action, () => {
+                    window.parent.postMessage({
+                        type: 'ST_HELPER_MICROPHONE_ORDER',
+                        payload: {
+                            locationName,
+                            locationId,
+                            preset: 'flag',
                             startedAt: pressTs
                         }
                     }, '*');
