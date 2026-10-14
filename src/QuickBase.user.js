@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         QuickBase: Панель базы знаний (все сайты)
 // @namespace    https://github.com/Lgyniwka/Autofill-check/blob/main/src/QuickBase.user.js
-// @version      0.13.2
-// @description  Панель базы знаний. Работы по роботу: приоритет через st-api с OAuth-токеном (🔑). Кружки и эмодзи при копировании приведены к одной шкале: красный блокер, оранжевый критичный, жёлтый средний (major/medium/normal).
+// @version      0.13.3
+// @description  Панель базы знаний. Работы по роботу: приоритет + резолюция из st-api (закрытые тикеты автоматически исчезают из списка, счётчик обновляется). Кружки приоритетов, копирование названий с эмодзи. Токен — кнопка 🔑 (один раз).
 // @homepageURL  https://github.com/Lgyniwka/Autofill-check/blob/main/src/QuickBase.user.js
 // @supportURL   https://github.com/Lgyniwka/Autofill-check/blob/main/src/QuickBase.user.js
 // @updateURL    https://raw.githubusercontent.com/Lgyniwka/Autofill-check/main/src/QuickBase.user.js
@@ -478,7 +478,7 @@
                 return;
             }
             robotResults.innerHTML =
-                '<div class="qb_robot_status">Открытых работ по a' + num + ': ' + tasks.length +
+                '<div class="qb_robot_status">Открытых работ по a' + num + ': <span class="qb_count">' + tasks.length + '</span>' +
                 ' <span class="qb_copy_all" title="Скопировать названия всех работ">⧉ копировать названия</span></div>' +
                 tasks.map((t, idx) =>
                     `<div class="qb_task" data-qb-task="${encode(t)}">
@@ -489,8 +489,8 @@
                     </div>`).join('');
             robotResults.querySelector('.qb_copy_all').addEventListener('click', (e) => {
                 e.stopPropagation();
-                // Каждая строка: цветной кружок (эмодзи) + название работы
-                GM_setClipboard(tasks.map((t) =>
+                // Каждая строка: цветной кружок (эмодзи) + название работы (закрытые не копируем)
+                GM_setClipboard(tasks.filter((t) => !t.closed).map((t) =>
                     (PR_EMOJI[priorityRank(t.priority)] || '⚪') + ' ' + t.summary
                 ).filter((line) => line.trim().length > 1).join('\n'));
                 const el = e.target;
@@ -515,6 +515,14 @@
                         dot.title = 'Приоритет: ' + (pr || 'не найден');
                     }
                 };
+                // Тикет закрыт (есть резолюция) — убираем его из списка, как это делает портал
+                const hideClosed = () => {
+                    t.closed = true;
+                    if (dot) dot.parentElement.style.display = 'none';
+                    const counter = robotResults.querySelector('.qb_count');
+                    const visible = tasks.filter((x) => !x.closed).length;
+                    if (counter) counter.textContent = String(visible);
+                };
                 GM_xmlhttpRequest({
                     method: 'GET',
                     url: 'https://st-api.yandex-team.ru/v2/issues/' + t.key,
@@ -525,13 +533,19 @@
                     onload: (res) => {
                         let pr = '';
                         let source = '';
+                        let closedByApi = false;
                         try {
                             const issue = JSON.parse(res.responseText);
                             pr = (issue && issue.priority && (issue.priority.key || issue.priority.display)) ? String(issue.priority.key || issue.priority.display).toLowerCase() : '';
+                            const resolution = issue && issue.resolution && (issue.resolution.key || issue.resolution.display);
+                            closedByApi = !!resolution && String(resolution).toLowerCase() !== "none";
                             source = 'st-api' + (stToken ? ' (OAuth)' : '');
+                            console.log('[QuickBase] ' + t.key + ': приоритет=' + (pr || '—') +
+                                ', резолюция=' + (resolution || 'пусто'));
                         } catch (err) {
                             source = 'не JSON, HTTP ' + res.status;
                         }
+                        if (closedByApi) { hideClosed(); return; }
                         if (!pr && stToken) console.log('[QuickBase] приоритет ' + t.key + ': API не дал приоритет |', source);
                         if (!pr) {
                             // v2 не сработал — пробуем HTML страницы тикета
