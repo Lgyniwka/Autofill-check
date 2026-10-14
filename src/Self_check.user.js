@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ST Ticket Self-Check
 // @namespace    http://tampermonkey.net/
-// @version      5.19
+// @version      5.20
 // @description  Самопроверка + форма учёта + комментарии. Переходы/поля/резолюция — через API Stracker
 // @author       You
 // @match        https://st.yandex-team.ru/*
@@ -177,7 +177,8 @@
         'ROBOT_BODY_SKIN': 162077,
         'ROBOT_ELECTRIC_WIRING': 162067,
         'ROBOT_MIM': 95074,
-        'ROBOT_CALIBRATION_CHECK': 181463
+        'ROBOT_CALIBRATION_CHECK': 181463,
+        'SOFTWARE_LOGS': 116228
     };
     const THE_DEFECT_CODE_FIELD = '60df26695151a36df681d67b--theDefectCode'; // Код дефекта
 
