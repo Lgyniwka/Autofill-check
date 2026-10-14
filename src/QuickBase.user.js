@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         QuickBase: Панель базы знаний (все сайты)
 // @namespace    https://github.com/Lgyniwka/Autofill-check/blob/main/src/QuickBase.user.js
-// @version      0.12.0
-// @description  Панель базы знаний. Работы по роботу: открытые тикеты, приоритет подтягивается из Startrek (красный блокер, оранжевый критичный, жёлтый средний), копирование названий. Вход кнопкой-ровером.
+// @version      0.12.1
+// @description  Панель базы знаний. Работы по роботу: открытые тикеты, приоритет из Startrek (кружки: красный блокер, оранжевый критичный, жёлтый средний), копирование названий вместе с цветными кружками-эмодзи. Вход кнопкой-ровером.
 // @homepageURL  https://github.com/Lgyniwka/Autofill-check/blob/main/src/QuickBase.user.js
 // @supportURL   https://github.com/Lgyniwka/Autofill-check/blob/main/src/QuickBase.user.js
 // @updateURL    https://raw.githubusercontent.com/Lgyniwka/Autofill-check/main/src/QuickBase.user.js
@@ -440,7 +440,10 @@
                     </div>`).join('');
             robotResults.querySelector('.qb_copy_all').addEventListener('click', (e) => {
                 e.stopPropagation();
-                GM_setClipboard(tasks.map((t) => t.summary).filter(Boolean).join('\n'));
+                // Каждая строка: цветной кружок (эмодзи) + название работы
+                GM_setClipboard(tasks.map((t) =>
+                    (PR_EMOJI[t.priority] || '⚪') + ' ' + t.summary
+                ).filter((line) => line.trim().length > 1).join('\n'));
                 const el = e.target;
                 el.textContent = '✅ Скопировано';
                 setTimeout(() => { el.textContent = '⧉ копировать названия'; }, 1200);
@@ -452,7 +455,8 @@
                 });
             });
 
-            // --- Приоритет из Startrek: ходим в каждый тикет и парсим класс Bubble-priority_priority_... ---
+            // Приоритет из Startrek
+            const PR_EMOJI = { blocker: '🔴', critical: '🟠', major: '🟡' };
             tasks.forEach((t, idx) => {
                 const dot = robotResults.querySelector(`[data-qb-pr="${idx}"]`);
                 GM_xmlhttpRequest({
@@ -464,6 +468,7 @@
                         const m = (res.responseText || '').match(/Bubble-priority_priority_([a-z]+)/)
                             || (res.responseText || '').match(/Bubble-Icon_priority_([a-z]+)/);
                         if (m) pr = m[1];
+                        t.priority = pr; // кружок учитывается и при копировании
                         if (dot) {
                             dot.style.background = priorityColor(pr);
                             dot.title = 'Приоритет: ' + (pr || 'не найден');
