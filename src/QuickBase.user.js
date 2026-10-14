@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         QuickBase: Панель базы знаний (все сайты)
 // @namespace    https://github.com/Lgyniwka/Autofill-check/blob/main/src/QuickBase.user.js
-// @version      0.10.0
-// @description  Панель базы знаний живёт рядом с сайтом. Поиск открытых работ по роботу: вводишь номер без «a» — получаешь список тикетов. Без горячих клавиш, вход кнопкой-ровером, закрытие крестиком. Все секции свёрнуты по умолчанию.
+// @version      0.10.1
+// @description  Панель базы знаний живёт рядом с сайтом. Поиск открытых работ по роботу — из JSON API tools.sdc (а не SPA-страницы), номер без «a», тикеты кликабельны. Без горячих клавиш, вход кнопкой-ровером. Все секции свёрнуты по умолчанию.
 // @homepageURL  https://github.com/Lgyniwka/Autofill-check/blob/main/src/QuickBase.user.js
 // @supportURL   https://github.com/Lgyniwka/Autofill-check/blob/main/src/QuickBase.user.js
 // @updateURL    https://raw.githubusercontent.com/Lgyniwka/Autofill-check/main/src/QuickBase.user.js
@@ -353,10 +353,10 @@
             robotResults.innerHTML = '<div class="qb_robot_status">Загружаю работы по a' + num + '…</div>';
             GM_xmlhttpRequest({
                 method: 'GET',
-                url: 'https://tools.sdc.yandex-team.ru/rovers/a' + num + '/maintenance',
+                url: 'https://tools.sdc.yandex-team.ru/api/rovers/a' + num + '/issues/',
                 timeout: 15000,
-                headers: { 'Accept': 'text/html' },
-                onload: (res) => renderRobotTasks(num, res.responseText),
+                headers: { 'Accept': 'application/json' },
+                onload: (res) => renderRobotTasks(num, res.responseText, res.status),
                 onerror: () => {
                     robotResults.innerHTML = '<div class="qb_robot_status">⚠ Не удалось загрузить (сеть)</div>';
                 },
@@ -366,25 +366,34 @@
             });
         }
 
-        function renderRobotTasks(num, html) {
-            let tasks = [];
-            try {
-                const doc = new DOMParser().parseFromString(html, 'text/html');
-                doc.querySelectorAll('table tbody tr').forEach((tr) => {
-                    const cells = tr.querySelectorAll('td');
-                    if (cells.length < 5) return;
-                    const linkEl = cells[3].querySelector('a');
-                    const link = linkEl ? linkEl.href : '';
-                    const key = linkEl ? linkEl.textContent.trim() : '';
-                    if (!key || !link) return; // строки без тикета пропускаем
-                    tasks.push({
-                        created: cells[0].textContent.trim(),
-                        summary: cells[4].textContent.trim(),
-                        link: link,
-                        key: key,
-                    });
-                });
-            } catch (err) { /* ignore */ }
+        function renderRobotTasks(num, text, status) {
+            let data;
+            try { data = JSON.parse(text); } catch (err) { data = null; }
+
+            // Приходим из JSON API: {maintenance: [...], incidents: [...]}
+            let tasks = (data && Array.isArray(data.maintenance)) ? data.maintenance : null;
+            if (!tasks) {
+                robotResults.innerHTML = '<div class="qb_robot_status">⚠ API вернул не JSON (HTTP ' + status + '). Ответ: ' + text.slice(0, 120) + '</div>';
+                return;
+            }
+            console.log('[QuickBase] issues API answer:', data);
+
+            // Показываем только ОТКРЫТЫЕ работы (resolved/resolution пуст)
+            tasks = tasks.filter((it) => {
+                const resolved = it.resolved || it.resolved_at || it.resolution || it.done;
+                return !resolved;
+            }).map((it) => {
+                const key = it.key || (it.ticket && (it.ticket.key || it.ticket))
+                    || (it.startrek_ticket && (it.startrek_ticket.key || it.startrek_ticket)) || '';
+                const link = it.url || (it.ticket && it.ticket.url) || (key ? 'https://st.yandex-team.ru/' + key : '');
+                return {
+                    key: typeof key === 'string' ? key : '',
+                    link: link,
+                    summary: it.summary || it.name || it.title || '',
+                    created: (it.created || it.created_at || '').toString().slice(0, 10),
+                };
+            }).filter((t) => t.key);
+
             if (!tasks.length) {
                 robotResults.innerHTML = '<div class="qb_robot_status">Открытых работ по a' + num + ' не найдено</div>';
                 return;
