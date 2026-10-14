@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         QuickBase: Панель базы знаний (все сайты)
 // @namespace    https://github.com/Lgyniwka/Autofill-check/blob/main/src/QuickBase.user.js
-// @version      0.9.0
-// @description  Панель базы знаний живёт рядом с сайтом. Без горячих клавиш — вход только кнопкой-ровером, закрытие крестиком. По умолчанию все секции свёрнуты. Сворачиваемые секции и строки с доп. данными (копирование внутри).
+// @version      0.10.0
+// @description  Панель базы знаний живёт рядом с сайтом. Поиск открытых работ по роботу: вводишь номер без «a» — получаешь список тикетов. Без горячих клавиш, вход кнопкой-ровером, закрытие крестиком. Все секции свёрнуты по умолчанию.
 // @homepageURL  https://github.com/Lgyniwka/Autofill-check/blob/main/src/QuickBase.user.js
 // @supportURL   https://github.com/Lgyniwka/Autofill-check/blob/main/src/QuickBase.user.js
 // @updateURL    https://raw.githubusercontent.com/Lgyniwka/Autofill-check/main/src/QuickBase.user.js
@@ -11,6 +11,8 @@
 // @run-at       document-end
 // @grant        GM_setClipboard
 // @grant        GM_openInTab
+// @grant        GM_xmlhttpRequest
+// @connect      tools.sdc.yandex-team.ru
 // @noframes
 // ==/UserScript==
 
@@ -327,6 +329,82 @@
         const input = panel.querySelector('#qb_search');
         input.addEventListener('input', () => applyFilter(input.value));
 
+        // --- Работы по роботу: ввод номера без «a», грузим список открытых работ ---
+        const robotInput = panel.querySelector('#qb_robot_input');
+        const robotGo = panel.querySelector('#qb_robot_go');
+        const robotResults = panel.querySelector('#qb_robot_results');
+
+        // Ввод: разрешаем только цифры (букву a в начале игнорируем)
+        robotInput.addEventListener('input', () => {
+            const cleaned = robotInput.value.replace(/^a+/i, '').replace(/\D/g, '');
+            if (robotInput.value !== cleaned) robotInput.value = cleaned;
+        });
+        robotInput.addEventListener('keydown', (e) => {
+            if (e.key === 'Enter') loadRobotTasks();
+        });
+        robotGo.addEventListener('click', loadRobotTasks);
+
+        function loadRobotTasks() {
+            const num = robotInput.value.trim();
+            if (!num) {
+                robotResults.innerHTML = '<div class="qb_robot_status">Введи номер робота, например 1580</div>';
+                return;
+            }
+            robotResults.innerHTML = '<div class="qb_robot_status">Загружаю работы по a' + num + '…</div>';
+            GM_xmlhttpRequest({
+                method: 'GET',
+                url: 'https://tools.sdc.yandex-team.ru/rovers/a' + num + '/maintenance',
+                timeout: 15000,
+                headers: { 'Accept': 'text/html' },
+                onload: (res) => renderRobotTasks(num, res.responseText),
+                onerror: () => {
+                    robotResults.innerHTML = '<div class="qb_robot_status">⚠ Не удалось загрузить (сеть)</div>';
+                },
+                ontimeout: () => {
+                    robotResults.innerHTML = '<div class="qb_robot_status">⚠ Таймаут запроса</div>';
+                },
+            });
+        }
+
+        function renderRobotTasks(num, html) {
+            let tasks = [];
+            try {
+                const doc = new DOMParser().parseFromString(html, 'text/html');
+                doc.querySelectorAll('table tbody tr').forEach((tr) => {
+                    const cells = tr.querySelectorAll('td');
+                    if (cells.length < 5) return;
+                    const linkEl = cells[3].querySelector('a');
+                    const link = linkEl ? linkEl.href : '';
+                    const key = linkEl ? linkEl.textContent.trim() : '';
+                    if (!key || !link) return; // строки без тикета пропускаем
+                    tasks.push({
+                        created: cells[0].textContent.trim(),
+                        summary: cells[4].textContent.trim(),
+                        link: link,
+                        key: key,
+                    });
+                });
+            } catch (err) { /* ignore */ }
+            if (!tasks.length) {
+                robotResults.innerHTML = '<div class="qb_robot_status">Открытых работ по a' + num + ' не найдено</div>';
+                return;
+            }
+            robotResults.innerHTML =
+                '<div class="qb_robot_status">Открытых работ по a' + num + ': ' + tasks.length + '</div>' +
+                tasks.map((t) =>
+                    `<div class="qb_task" data-qb-task="${encode(t)}">
+                        <span class="qb_task_key">${t.key}</span>
+                        <span class="qb_task_date">${t.created}</span>
+                        <span class="qb_task_summary">${t.summary}</span>
+                    </div>`).join('');
+            robotResults.querySelectorAll('[data-qb-task]').forEach((el) => {
+                el.addEventListener('click', () => {
+                    const t = decode(el.dataset.qbTask);
+                    GM_openInTab(t.link, { active: true });
+                });
+            });
+        }
+
         // Клик по строке: копирование / ссылка / раскрытие details
         panel.addEventListener('click', (e) => {
             const dRow = e.target.closest('[data-qb-detail]');
@@ -480,6 +558,32 @@
                     padding: 6px 10px; font-size: 12px; outline: none;
                 }
                 #${PANEL_ID} input#qb_search:focus { border-color: #4c6ef5; }
+                #${PANEL_ID} .qb_robot {
+                    display: flex; gap: 6px; margin-top: 8px;
+                }
+                #${PANEL_ID} input#qb_robot_input {
+                    flex: 1; box-sizing: border-box;
+                    background: #0f131c; color: #e6e9f0;
+                    border: 1px solid #2c3345; border-radius: 8px;
+                    padding: 6px 10px; font-size: 12px; outline: none;
+                }
+                #${PANEL_ID} input#qb_robot_input:focus { border-color: #51cf66; }
+                #${PANEL_ID} #qb_robot_go {
+                    cursor: pointer; user-select: none; flex: none;
+                    background: #1d2330; border: 1px solid #2c3345; border-radius: 8px;
+                    padding: 5px 9px; font-size: 12px;
+                }
+                #${PANEL_ID} #qb_robot_go:hover { background: #262e40; }
+                #${PANEL_ID} .qb_robot_status { color: #8b93a7; font-size: 11px; margin: 6px 2px; }
+                #${PANEL_ID} .qb_task {
+                    display: flex; align-items: baseline; gap: 8px;
+                    padding: 5px 8px; border-radius: 7px; cursor: pointer;
+                    border: 1px solid #1d2330; margin: 4px 0;
+                }
+                #${PANEL_ID} .qb_task:hover { background: #1d2330; border-color: #2c3345; }
+                #${PANEL_ID} .qb_task_key { font-weight: 700; font-size: 11px; color: #74c0fc; white-space: nowrap; }
+                #${PANEL_ID} .qb_task_date { font-size: 10px; color: #6e7890; white-space: nowrap; }
+                #${PANEL_ID} .qb_task_summary { font-size: 11.5px; color: #e6e9f0; }
                 #${PANEL_ID} .qb_section { margin-top: 8px; }
                 #${PANEL_ID} .qb_empty { color: #7b8395; padding: 14px 4px; font-size: 12px; text-align: center; }
                 #${PANEL_ID} .qb_section_title {
@@ -535,6 +639,12 @@
                     <span class="qb_close" title="Закрыть">✕</span>
                 </div>
                 <input id="qb_search" type="text" placeholder="Поиск по разделам и работам…" autocomplete="off">
+                <div class="qb_robot">
+                    <input id="qb_robot_input" type="text" inputmode="numeric"
+                           placeholder="Работы по роботу — номер без «a», напр. 1580" autocomplete="off">
+                    <span id="qb_robot_go">🔍</span>
+                </div>
+                <div id="qb_robot_results"></div>
                 <div id="qb_sections">${sectionsHTML}</div>
                 <div class="qb_empty" id="qb_empty" style="display:none">Ничего не найдено</div>
             </div>`;
