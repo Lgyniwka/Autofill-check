@@ -582,7 +582,8 @@
             // в комментарии и заказе — точное число рессор
             leafSprings: {
                 seriesQuery: 'robot_suspension', seriesChip: 'ROBOT_SUSPENSION',
-                wikiText: 'Рессора для R 3.9  // НЕТ КОДА 1С //', qty: '1'
+                wikiText: 'Рессора для R 3.9  // НЕТ КОДА 1С //', qty: '1',
+                skAnswer: 'Нет' // рессоры: «Это СК» = Нет (у остальных Да)
             }
         };
 
@@ -619,10 +620,11 @@
                 if (!pickRadioByName('answer_one_answer_9008988226731508', '1788972002689', 'Не донор'))
                     await pickOption('Не донор');
                 await new Promise(r => setTimeout(r, 300));
-                // Радио «Это СК» — теперь всегда «Да» (раньше «Нет»);
-                // id «Да»-опции не выверен, поэтому кликаем только по тексту.
-                const skPicked = await pickOptionIn(document, 'Да');
-                if (!skPicked) console.warn('[AF] Опция «Да» (Это СК) не найдена');
+                // Радио «Это СК»: Да по умолчанию, но пресет может переопределить
+                // (рессоры — «Нет»). id опций не выверены — клик по тексту.
+                const skAnswer = preset.skAnswer || 'Да';
+                const skPicked = await pickOptionIn(document, skAnswer);
+                if (!skPicked) console.warn('[AF] Опция «' + skAnswer + '» (Это СК) не найдена');
                 await new Promise(r => setTimeout(r, 300));
                 if (!pickRadioByName('answer_choices_1908101', '3179563', 'Запчасти'))
                     await pickOption('Запчасти');
