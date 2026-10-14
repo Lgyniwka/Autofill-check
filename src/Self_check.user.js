@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ST Ticket Self-Check
 // @namespace    http://tampermonkey.net/
-// @version      5.23
+// @version      5.24
 // @description  Самопроверка + форма учёта + комментарии. Переходы/поля/резолюция — через API Stracker
 // @author       You
 // @match        https://st.yandex-team.ru/*
@@ -255,20 +255,23 @@
     // дополнительно можно перечислить имена переходов (ru/en display) и id транзишена.
     async function runTransition(issueKey, accept, timeoutMs = 10000, body) {
         if (!OAUTH_TOKEN) { showTokenModal(); return false; }
-        const names = Array.isArray(accept) ? accept : [accept];
-        const norm = s => String(s || '').trim().toLowerCase();
         const start = Date.now();
         while (Date.now() - start < timeoutMs) {
             const list = await getTransitions(issueKey);
-            const t = list.find(x => {
-                const id = norm(x.id);
-                const display = norm(x.display);
-                const toKey = norm(x.to && (x.to.key || x.to.id));
-                return names.some(n => {
-                    const v = norm(n);
-                    return id === v || display === v || toKey === v;
-                });
-            });
+            const norm = s => String(s || '').trim().toLowerCase();
+            const match = (x, v) => {
+                const n = norm(v);
+                return norm(x.id) === n || norm(x.display) === n || norm(x.to && (x.to.key || x.to.id)) === n;
+            };
+            // ВАЖНО: имена принимаются в порядке приоритета — если несколько
+            // переходов ведут в один статус (например, в 'treated' ведут и
+            // «Передать электрикам», и «Передать механикам»), берём первое
+            // совпавшее ИМЯ, а не первый попавшийся переход из списка.
+            let t = null;
+            for (const n of names) {
+                t = list.find(x => match(x, n));
+                if (t) break;
+            }
             if (t) {
                 const url = `https://st-api.yandex-team.ru/v3/issues/${issueKey}/transitions/${t.id}/_execute`;
                 const toKey = t.to && (t.to.key || t.to.id);
@@ -671,7 +674,7 @@
             } catch (e) {
                 console.warn('[ST] PATCH компонента/дедлайна не прошёл:', e.status, String(e.text || '').slice(0, 300));
             }
-            const okTreated = await runTransition(issueKey, 'treated', 8000);
+            const okTreated = await runTransition(issueKey, ['передать механикам', 'treated'], 8000);
             console.log('[ST] Переход в «Обработан»: ' + (okTreated ? 'выполнен' : 'не найден'));
             await sleep(1500);
 
@@ -710,7 +713,7 @@
 
             // 5. Далее статусы: «Ожидание поставки» → «Обработан» → «В работе» → «Проверка» → «Закрыт» + итоговый комментарий
             await sleep(1500);
-            await runTransition(issueKey, 'treated');        // delieveryWaiting -> treated (вернулись из Ожидания поставки)
+            await runTransition(issueKey, ['передать механикам', 'treated']);        // delieveryWaiting -> treated (вернулись из Ожидания поставки)
             await runTransition(issueKey, 'inProgress');     // treated -> inProgress (Взять в работу)
             await setSolutionViaApi(issueKey, 'CHANGE');
             await runTransition(issueKey, 'check');
@@ -933,7 +936,7 @@
             console.warn('[ST] PATCH компонента/дедлайна не прошёл:', e.status, String(e.text || '').slice(0, 300));
         }
         await runTransition(issueKey, 'new', 1500);
-        await runTransition(issueKey, 'treated');
+        await runTransition(issueKey, ['передать механикам', 'treated']);
         await runTransition(issueKey, 'inProgress');
         await setSolutionViaApi(issueKey, 'MAINTENANCE');
         await runTransition(issueKey, ['check2', 'check']);
@@ -998,7 +1001,7 @@
         }
 
         // 2. Обработан (Передать механикам)
-        await runTransition(issueKey, 'treated');
+        await runTransition(issueKey, ['передать механикам', 'treated']);
         // 3. В работе (Взять в работу)
         await runTransition(issueKey, 'inProgress');
         // 4. Способ решения
