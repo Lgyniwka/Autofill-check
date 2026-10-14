@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Accounting Form AutoFill
 // @namespace    https://github.com/Lgyniwka/Autofill-check
-// @version      2.24
+// @version      2.25
 // @description  Плавающая панель + отправка комментария + переход статусов. Пресеты: QR, ППР (форма осмотра), жгут микрофонов, АКБ
 // @author       You
 // @match        https://tools.sdc.yandex-team.ru/accounting-fleet-works*
@@ -755,6 +755,7 @@
         </div>
         <div class="acp-body">
             <button class="acp-btn" data-action="stickers">Замена QR</button>
+            <button class="acp-btn" data-action="logsdump">Слив логов</button>
             <button class="acp-btn" data-action="ppr">ППР робота</button>
             <button class="acp-btn" data-action="microphone">Установка жгута микрофонов</button>
             <button class="acp-btn" data-action="battery">Замена коннекторов АКБ</button>
@@ -975,11 +976,12 @@
                                 // Колбэк после сохранения (напр. команда заказа запчастей)
                                 if (typeof onSaved === 'function') onSaved(saved);
 
-                                // Переход статусов — ТОЛЬКО для Замена QR
-                                if (action === 'stickers') {
+                                // Переход статусов — для пресетов без заказов/форм
+                                if (action === 'stickers' || action === 'logsdump') {
                                     setTimeout(() => {
                                         window.parent.postMessage({
-                                            type: 'ST_HELPER_TICKET_TRANSITION'
+                                            type: 'ST_HELPER_TICKET_TRANSITION',
+                                            preset: action
                                         }, '*');
                                     }, 1500);
                                 }
@@ -1052,6 +1054,9 @@
 
         if (action === 'stickers') {
             doAction(btn, 'Замена наклеек', 'Замена наклеек', 'Наклеили новый QR', action);
+        }
+        if (action === 'logsdump') {
+            doAction(btn, 'работа с тикетами SDCLOGSCONTROL', 'Контроль слива логов с роботов, работа с тикетами SDCLOGSCONTROL', 'Слили логи', action);
         }
         if (action === 'ppr') {
             // ППР: сначала РУЧНОЙ выбор фото робота, затем стандартный doAction

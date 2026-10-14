@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ST Ticket Self-Check
 // @namespace    http://tampermonkey.net/
-// @version      5.18
+// @version      5.19
 // @description  Самопроверка + форма учёта + комментарии. Переходы/поля/резолюция — через API Stracker
 // @author       You
 // @match        https://st.yandex-team.ru/*
@@ -936,9 +936,37 @@
     // =====================================================
     //  Полный переход статусов — через API (Замена QR)
     // =====================================================
-    async function runTicketTransition(startedAt) {
+    // Резолв id компонента: справочник → API очереди (кэшируется)
+    async function resolveComponentId(nameOrId) {
+        if (typeof nameOrId === 'number') return nameOrId;
+        if (COMPONENT_IDS[nameOrId]) return COMPONENT_IDS[nameOrId];
+        try {
+            const r = await apiRequest('GET', 'https://st-api.yandex-team.ru/v2/queues/SDCFLEETOPS/components');
+            const list = (r.data && Array.isArray(r.data)) ? r.data : [];
+            const found = list.find(c =>
+                String(c.name || '').toUpperCase() === String(nameOrId).toUpperCase() ||
+                String(c.key || '').toUpperCase() === String(nameOrId).toUpperCase());
+            if (found) {
+                COMPONENT_IDS[nameOrId] = found.id;
+                console.log('[ST] Компонент найден через API:', nameOrId, '=', found.id);
+                return found.id;
+            }
+        } catch (e) {
+            console.warn('[ST] Не получил список компонентов:', e.status, String(e.text || '').slice(0, 300));
+        }
+        return null;
+    }
+
+    // Пресеты статусного флоу (без заказов запчастей и форм осмотра)
+    const TICKET_PRESETS = {
+        stickers: { component: 'ROBOT_BODY_SKIN', solution: 'CHANGE', label: 'Замена QR' },
+        logsdump: { component: 'SOFTWARE_LOGS', solution: 'CONFIG', label: 'Слив логов' }
+    };
+
+    async function runTicketTransition(startedAt, presetKey) {
         startedAt = startedAt || Date.now();
-        console.log('[ST Helper] Переход статусов (Замена QR) — через API');
+        const preset = TICKET_PRESETS[presetKey] || TICKET_PRESETS.stickers;
+        console.log('[ST Helper] Переход статусов (' + preset.label + ') — через API');
         const issueKey = getTicketKey();
         if (!issueKey) { console.warn('[ST] Тикет не определён'); return; }
         if (!OAUTH_TOKEN) { showTokenModal(); return; }
@@ -946,15 +974,21 @@
         // 0. Если не в «Новом» — переводим туда (если уже в Новом, перехода нет, идём дальше)
         await runTransition(issueKey, 'new', 1500);
 
-        // 1. Компонент
-        await setComponentApi(issueKey, 'ROBOT_BODY_SKIN');
+        // 1. Компонент (id из справочника или через API очереди)
+        const componentId = await resolveComponentId(preset.component);
+        if (componentId) {
+            await apiRequest('PATCH', `https://st-api.yandex-team.ru/v3/issues/${issueKey}`, { components: componentId })
+                .catch(e => console.warn('[ST] PATCH компонента не прошёл:', e.status, String(e.text || '').slice(0, 300)));
+        } else {
+            console.warn('[ST] Компонент не найден:', preset.component);
+        }
 
         // 2. Обработан (Передать механикам)
         await runTransition(issueKey, 'treated');
         // 3. В работе (Взять в работу)
         await runTransition(issueKey, 'inProgress');
         // 4. Способ решения
-        await setSolutionViaApi(issueKey, 'CHANGE');
+        await setSolutionViaApi(issueKey, preset.solution);
         // 5. В проверку (ключ по памяти проекта — check2)
         await runTransition(issueKey, ['check2', 'check']);
         // 6. Код дефекта
@@ -971,7 +1005,7 @@
 
         const elapsedSec = ((Date.now() - startedAt) / 1000).toFixed(1);
         console.log('[ST Helper] Переход статусов завершён за ' + elapsedSec + ' сек');
-        showToast('Замена QR: готово за ' + elapsedSec + ' сек', 7000);
+        showToast(preset.label + ': готово за ' + elapsedSec + ' сек', 7000);
     }
 
 
@@ -1000,8 +1034,9 @@
 
         if (event.data.type === 'ST_HELPER_TICKET_TRANSITION') {
             const startedAt = Date.now();
+            const presetKey = event.data.preset || 'stickers';
             await sleep(2000);
-            await runTicketTransition(startedAt);
+            await runTicketTransition(startedAt, presetKey);
         }
 
         if (event.data.type === 'ST_HELPER_MICROPHONE_ORDER') {
