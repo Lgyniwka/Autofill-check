@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         WifiQR: Робот → QR-код
 // @namespace    local
-// @version      2.4
+// @version      2.5
 // @description  Читает SSID/пароль Wi-Fi робота из shell-лога лаунчера и генерирует QR-код локально на странице (офлайн), с кнопками копирования
 // @match        https://*.launcher.sdc.yandex-team.ru/*
 // @grant        GM_getValue
@@ -237,6 +237,34 @@ var QRCode;!function(){function a(a){this.mode=c.MODE_8BIT_BYTE,this.data=a,this
         console.log('[WifiQR]', text.replace(/\n/g, ' | '));
     }
 
+    // Запуск робота с выбранного профиля: Start → выбор профиля →
+    // пауза на прогрузку → кнопка «Запустить».
+    async function startWithProfile(profileName) {
+        console.log('[WifiQR] Запуск профиля:', profileName);
+        try {
+            const start = await waitElement('.sdc-robot-start-screen__button', 'Start', CONFIG.WAIT_ELEMENT_TIMEOUT);
+            if (!start) { showToast('Кнопка Start не найдена'); return; }
+            clickIt(start);
+            console.log('[WifiQR] Нажат Start');
+
+            const prof = await waitElement('.sdc-profile-list__item-caption', profileName, CONFIG.WAIT_ELEMENT_TIMEOUT);
+            if (!prof) { showToast('Профиль «' + profileName + '» не найден'); return; }
+            clickIt(prof);
+            console.log('[WifiQR] Выбран профиль:', profileName);
+
+            await sleep(CONFIG.PAUSE_MED); // прогрузка после выбора профиля
+
+            const run = await waitElement('.sdc-button__children', 'Запустить', CONFIG.WAIT_ELEMENT_TIMEOUT);
+            if (!run) { showToast('Кнопка «Запустить» не найдена'); return; }
+            clickIt(run);
+            console.log('[WifiQR] Нажата «Запустить»');
+            showToast('Профиль «' + profileName + '»: запуск');
+        } catch (e) {
+            console.warn('[WifiQR] Ошибка запуска профиля:', e);
+            showToast('Ошибка запуска профиля');
+        }
+    }
+
     function addLaunchButton() {
         if (document.getElementById('st-wifiqr-launch')) return;
         const btn = document.createElement('button');
@@ -249,6 +277,24 @@ var QRCode;!function(){function a(a){this.mode=c.MODE_8BIT_BYTE,this.data=a,this
             cursor: 'pointer', boxShadow: '0 6px 24px rgba(0,0,0,.35)'
         });
         btn.addEventListener('click', runOnLauncher);
+
+        // Кнопки запуска профилей (стек над кнопкой QR)
+        const mk = (id, text, bg, handler, bottom) => {
+            const b = document.createElement('button');
+            b.id = id;
+            b.textContent = text;
+            Object.assign(b.style, {
+                position: 'fixed', right: '16px', bottom: bottom + 'px', zIndex: '999999',
+                background: bg, color: '#fff', border: 'none', borderRadius: '8px',
+                padding: '10px 14px', font: '13px/1.2 -apple-system,"Segoe UI",Roboto,sans-serif',
+                cursor: 'pointer', boxShadow: '0 6px 24px rgba(0,0,0,.35)'
+            });
+            b.addEventListener('click', handler);
+            document.body.appendChild(b);
+        };
+        mk('st-wifiqr-prod', '▶ Robot production', '#22c55e', () => startWithProfile('Robot production'), 96);
+        mk('st-wifiqr-calib', '▶ Calibration', '#f59e0b', () => startWithProfile('Calibration'), 56);
+
         document.body.appendChild(btn);
     }
 
