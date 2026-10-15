@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         Prelauncher Check
 // @namespace    http://tampermonkey.net/
-// @version      0.2.0
-// @description  Перебор роверов: последовательная проверка prelauncher-страниц в скрытом iframe (.app__header "Prelauncher", "Current branch")
+// @version      0.3.0
+// @description  Перебор роверов: проверка prelauncher-страниц в скрытом iframe по якорям (без таймеров)
 // @author       You
 // @match        https://*.launcher.sdc.yandex-team.ru/*
 // @grant        none
@@ -15,39 +15,64 @@
 
     const LOG = '[PLC]';
     const CHILD_FLAG = 'plcheck=1';
-    const POLL_MS = 3000;
-    const TIMEOUT_MS = 60000;
-    const FALLBACK_MS = TIMEOUT_MS + 5000;
+    const POLL_MS = 1000; // якоря появляются быстро, таймеры не нужны
 
     // ============ Дочерний контекст (iframe с ?plcheck=1) ============
+    // Собирает состояние по якорям и шлёт результат, как только он определён.
     if (location.search.includes(CHILD_FLAG)) {
         const target = window.opener || window.parent;
         if (target && target !== window) {
-            const start = Date.now();
             const t = setInterval(() => {
                 const header = document.querySelector('.app__header');
-                if (header) {
-                    clearInterval(t);
-                    target.postMessage({
-                        type: 'PLCHECK_RESULT',
-                        host: location.hostname,
-                        header: (header.innerText || '').trim(),
-                        branch: document.body.innerText.includes('Current branch'),
-                        elapsed: Date.now() - start
-                    }, '*');
-                } else if (Date.now() - start > TIMEOUT_MS) {
-                    clearInterval(t);
-                    target.postMessage({
-                        type: 'PLCHECK_RESULT',
-                        host: location.hostname,
-                        header: null,
-                        branch: false,
-                        elapsed: Date.now() - start
-                    }, '*');
+
+                // Якорь 1: не загружено приложение — дальше нечего смотреть
+                if (!header) return;
+
+                const bodyText = document.body.innerText || '';
+
+                // Якорь 2: Rover name заполнен (elements__value-init рядом с «Rover name»)
+                let roverName = null;
+                const nameBlocks = document.querySelectorAll('.elements__text');
+                for (const block of nameBlocks) {
+                    const label = block.querySelector('.elements__text-name');
+                    if (label && label.textContent.trim() === 'Rover name') {
+                        const span = block.querySelector('.elements__value-init span, .elements__value-loaded span');
+                        if (span) roverName = span.textContent.trim();
+                        break;
+                    }
                 }
+
+                // Якорь 3: Command status (elements__value-loaded/-loading рядом с «Command status»)
+                let cmdStatus = null;
+                for (const block of nameBlocks) {
+                    const label = block.querySelector('.elements__text-name');
+                    if (label && label.textContent.trim() === 'Command status') {
+                        const span = block.querySelector('.elements__value-loaded span, .elements__value-loading span, .elements__value-init span');
+                        if (span) cmdStatus = span.textContent.trim();
+                        break;
+                    }
+                }
+
+                // Якорь 4: ровер недостижим по сети — решающий
+                const unreachable = /network is unreachable|connection refused|no route to host|timeout/i.test(bodyText);
+
+                // Проверяем, что состояние решающее: rover name заполнился ИЛИ status отрисовался ИЛИ сеть недоступна
+                const decided = (roverName && roverName.startsWith('a')) || !!cmdStatus || unreachable;
+                if (!decided) return;
+
+                clearInterval(t);
+                target.postMessage({
+                    type: 'PLCHECK_RESULT',
+                    host: location.hostname.split('.')[0],
+                    page: header.textContent.trim() === 'Prelauncher',
+                    rover: roverName,
+                    status: cmdStatus,
+                    unreachable,
+                    branch: bodyText.includes('Current branch')
+                }, '*');
             }, POLL_MS);
         }
-        return; // панель в iframe проверки не нужна
+        return;
     }
 
     // ============ Родитель: панель перебора ============
@@ -55,7 +80,7 @@
     let running = false, stopReq = false;
     let iframe = null;
     let pendingResolve = null;
-    const results = []; // {num, header, branch, elapsed}
+    const results = []; // {num, page, rover, status, unreachable, branch}
 
     function createPanel() {
         if (document.getElementById('pl-check-panel')) return;
@@ -111,9 +136,16 @@
     }
 
     function rowHtml(r) {
-        return `<div>a${r.num}: ${r.header === 'Prelauncher' ? '<b style="color:green">YES</b>' : '<b style="color:#b00">NO</b>'}`
-            + ` | Current branch: ${r.branch ? '<b style="color:green">YES</b>' : 'no'}`
-            + ` <span style="color:#999">(${(r.elapsed / 1000).toFixed(0)}с)</span></div>`;
+        // доступность ровера: страница отвечает И ровер ответил (не unreachable)
+        const ok = r.page && !r.unreachable;
+        let tag;
+        if (!r.page) tag = '<b style="color:#b00">PAGE: NO</b>';
+        else if (r.unreachable) tag = '<b style="color:#b00">UNREACHABLE</b>';
+        else if (r.rover) tag = `<b style="color:green">OK</b> <span style="color:#999">${r.status || ''}</span>`;
+        else tag = '<b style="color:#b00">NO DATA</b>';
+        return `<div>a${r.num}: ${tag}`
+            + ` | branch: ${r.branch ? 'YES' : 'no'}`
+            + `</div>`;
     }
 
     function setStatus(text) {
@@ -126,8 +158,14 @@
 
     function onChildResult(e) {
         if (!e.data || e.data.type !== 'PLCHECK_RESULT' || !pendingResolve) return;
-        const num = String(e.data.host).replace(/^a(\d+)\..*$/, '$1');
-        const r = { num, header: e.data.header, branch: e.data.branch, elapsed: e.data.elapsed };
+        const r = {
+            num: String(e.data.host).replace(/^a(\d+)$/, '$1'),
+            page: e.data.page,
+            rover: e.data.rover,
+            status: e.data.status,
+            unreachable: e.data.unreachable,
+            branch: e.data.branch
+        };
         results.push(r);
         resultsBox.insertAdjacentHTML('beforeend', rowHtml(r));
         removeIframe();
@@ -142,18 +180,15 @@
             iframe = document.createElement('iframe');
             iframe.style.cssText = 'position:fixed;width:1px;height:1px;left:-9999px;top:0;border:0;visibility:hidden;';
             iframe.src = `https://a${num}.launcher.sdc.yandex-team.ru/prelauncher/?${CHILD_FLAG}`;
+            iframe.addEventListener('error', () => {
+                results.push({ num, page: false, rover: null, status: null, unreachable: false, branch: false });
+                resultsBox.insertAdjacentHTML('beforeend', `<div>a${num}: <b style="color:#b00">ERR</b> iframe не загрузился</div>`);
+                removeIframe();
+                const res2 = pendingResolve;
+                pendingResolve = null;
+                if (res2) res2();
+            });
             document.body.appendChild(iframe);
-            // страховка: iframe не загрузился / скрипт в нём не выполнился (X-Frame-Options и т.п.)
-            setTimeout(() => {
-                if (pendingResolve) {
-                    results.push({ num, header: null, branch: false, elapsed: 0 });
-                    resultsBox.insertAdjacentHTML('beforeend', `<div>a${num}: <b style="color:#b00">ERR</b> iframe не загрузился</div>`);
-                    removeIframe();
-                    const res2 = pendingResolve;
-                    pendingResolve = null;
-                    res2();
-                }
-            }, FALLBACK_MS);
         });
     }
 
@@ -179,9 +214,9 @@
     }
 
     function copyReport() {
-        const yes = results.filter(r => r.header === 'Prelauncher').map(r => 'a' + r.num);
-        const no = results.filter(r => r.header !== 'Prelauncher').map(r => 'a' + r.num);
-        const text = ['ДА:', yes.join(', ') || '—', '', 'НЕТ:', no.join(', ') || '—'].join('\n');
+        const ok = results.filter(r => r.page && !r.unreachable).map(r => 'a' + r.num);
+        const no = results.filter(r => !(r.page && !r.unreachable)).map(r => 'a' + r.num);
+        const text = ['ОК:', ok.join(', ') || '—', '', 'НЕТ:', no.join(', ') || '—'].join('\n');
         navigator.clipboard.writeText(text).then(() => setStatus('Отчёт скопирован'));
     }
 
