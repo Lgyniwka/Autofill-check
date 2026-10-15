@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Prelauncher Check
 // @namespace    http://tampermonkey.net/
-// @version      0.3.0
+// @version      0.4.0
 // @description  Перебор роверов: проверка prelauncher-страниц в скрытом iframe по якорям (без таймеров)
 // @author       You
 // @match        https://*.launcher.sdc.yandex-team.ru/*
@@ -15,7 +15,8 @@
 
     const LOG = '[PLC]';
     const CHILD_FLAG = 'plcheck=1';
-    const POLL_MS = 1000; // якоря появляются быстро, таймеры не нужны
+    const POLL_MS = 1000; // якоря появляются быстро
+    const HANG_MS = 15000; // watchdog: ни один якорь не появился — считаем «нет ответа»
 
     // ============ Дочерний контекст (iframe с ?plcheck=1) ============
     // Собирает состояние по якорям и шлёт результат, как только он определён.
@@ -189,6 +190,17 @@
                 if (res2) res2();
             });
             document.body.appendChild(iframe);
+            // watchdog: страница зависла и не показала ни одного якоря (напр. a2698)
+            setTimeout(() => {
+                if (pendingResolve) {
+                    results.push({ num, page: false, rover: null, status: null, unreachable: false, branch: false });
+                    resultsBox.insertAdjacentHTML('beforeend', `<div>a${num}: <b style="color:#b00">NO RESPOND</b> (${HANG_MS / 1000}с, якорей нет)</div>`);
+                    removeIframe();
+                    const res2 = pendingResolve;
+                    pendingResolve = null;
+                    res2();
+                }
+            }, HANG_MS);
         });
     }
 
