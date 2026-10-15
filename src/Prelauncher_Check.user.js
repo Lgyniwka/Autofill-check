@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         Prelauncher Check
 // @namespace    http://tampermonkey.net/
-// @version      0.8.0
-// @description  Перебор роверов: скрытые iframe пачками по 5. Правило: "connect: network is unreachable" → мёртв, остальное → ОК
+// @version      0.9.0
+// @description  Перебор роверов: скрытые iframe пачками по 5, вердикт по API /prelauncher/cmd-status (200=OK, 502+dial=мёртв)
 // @author       You
 // @match        https://*.launcher.sdc.yandex-team.ru/*
 // @grant        none
@@ -16,58 +16,79 @@
     const LOG = '[PLC]';
     const CHILD_FLAG = 'plcheck=1';
     const POLL_MS = 1000;
-    const SHELL_TIMEOUT_MS = 10000;
-    const DATA_TIMEOUT_MS = 30000;
+    const SHELL_TIMEOUT_MS = 12000; // страница/хост вообще не отвечают
+    const FETCH_RETRY_MS = 10000;   // сколько ретраить фетч-ошибки до вердикта
     const BATCH_SIZE = 5;
 
     const UNREACHABLE_RE = /connect: network is unreachable/;
 
     // ============ Дочерний контекст (iframe с ?plcheck=1) ============
+    // Вердикт по API: GET /prelauncher/cmd-status
+    //   200 -> робот жив; ответ с "connect: network is unreachable" -> мёртв;
+    //   фетч-ошибки -> ретраи; не прошло -> по правилу пользователя считаем живым.
     if (location.search.includes(CHILD_FLAG)) {
         const target = window.opener || window.parent;
         if (target && target !== window) {
             const start = Date.now();
             console.log(LOG, 'child started', location.hostname);
+            let done = false;
 
-            function blockValue(name) {
-                for (const block of document.querySelectorAll('.elements__text')) {
-                    const label = block.querySelector('.elements__text-name');
-                    if (label && label.textContent.trim() === name) {
-                        const span = block.querySelector('.elements__text-value span');
-                        if (span) {
-                            const t = span.textContent.trim();
-                            if (t) return t;
-                        }
-                        break;
+            async function probe() {
+                try {
+                    const r = await fetch('/prelauncher/cmd-status', { cache: 'no-store' });
+                    const text = await r.text();
+                    if (UNREACHABLE_RE.test(text) || (r.status >= 500 && UNREACHABLE_RE.test(text))) {
+                        return { verdict: 'unreachable', status: r.status, text: text.slice(0, 120) };
                     }
+                    // 200 или любой другой ответ сервера — прелаунчер на роботе отвечает
+                    let value = null;
+                    try { value = JSON.parse(text).value; } catch (e) { value = text.slice(0, 120); }
+                    return { verdict: 'ok', status: r.status, value };
+                } catch (e) {
+                    return { verdict: 'fetch-error', error: String(e && e.message || e) };
                 }
-                return null;
             }
 
-            const t = setInterval(() => {
-                const header = document.querySelector('.app__header');
-                if (!header) return;
+            (async function () {
+                while (!done) {
+                    const p = await probe();
+                    const elapsed = Date.now() - start;
 
-                const bodyText = document.body.innerText || '';
-                const unreachable = UNREACHABLE_RE.test(bodyText);
-                const rover = blockValue('Rover name');
-                const status = blockValue('Command status');
-                const dataTimeout = Date.now() - start > DATA_TIMEOUT_MS;
+                    if (p.verdict === 'ok' || p.verdict === 'unreachable') {
+                        done = true;
+                        console.log(LOG, 'RESULT', p.verdict, p.status, p.value || p.text, `${(elapsed / 1000).toFixed(0)}s`);
+                        target.postMessage({
+                            type: 'PLCHECK_RESULT',
+                            host: location.hostname.split('.')[0],
+                            ok: p.verdict === 'ok',
+                            status: p.value,
+                            unreachable: p.verdict === 'unreachable',
+                            apiStatus: p.status,
+                            apiText: p.text || p.error || null,
+                            elapsed
+                        }, '*');
+                        return;
+                    }
 
-                if (!unreachable && !rover && !status && !dataTimeout) return;
-
-                clearInterval(t);
-                console.log(LOG, 'RESULT', unreachable ? 'UNREACHABLE' : 'OK', rover, status, `${((Date.now() - start) / 1000).toFixed(0)}s`);
-                target.postMessage({
-                    type: 'PLCHECK_RESULT',
-                    host: location.hostname.split('.')[0],
-                    shell: true,
-                    rover,
-                    status,
-                    unreachable,
-                    elapsed: Date.now() - start
-                }, '*');
-            }, POLL_MS);
+                    // фетч-ошибки: ретраим до FETCH_RETRY_MS, дальше по правилу «остальное = ОК»
+                    if (Date.now() - start > FETCH_RETRY_MS) {
+                        done = true;
+                        console.log(LOG, 'RESULT ok (fetch errors only, presumed alive)', p.error, `${(elapsed / 1000).toFixed(0)}s`);
+                        target.postMessage({
+                            type: 'PLCHECK_RESULT',
+                            host: location.hostname.split('.')[0],
+                            ok: true,
+                            status: null,
+                            unreachable: false,
+                            apiStatus: 0,
+                            apiText: 'fetch error: ' + p.error + ' (presumed alive)',
+                            elapsed
+                        }, '*');
+                        return;
+                    }
+                    await new Promise(res => setTimeout(res, POLL_MS));
+                }
+            })();
         }
         return;
     }
@@ -133,9 +154,8 @@
 
     function rowHtml(r) {
         let tag;
-        if (r.unreachable) tag = '<b style="color:#b00">UNREACHABLE</b>';
-        else if (r.rover) tag = `<b style="color:green">OK</b> <span style="color:#999">${r.status || ''}</span>`;
-        else if (r.shell) tag = '<b style="color:green">OK</b> <span style="color:#999">без данных</span>';
+        if (r.unreachable) tag = `<b style="color:#b00">UNREACHABLE</b> <span style="color:#999">${r.apiText || ''}</span>`;
+        else if (r.ok) tag = `<b style="color:green">OK</b> <span style="color:#999">${r.status || (r.apiText ? r.apiText.slice(0, 40) : '')}</span>`;
         else tag = '<b style="color:#b00">PAGE: NO</b>';
         return `<div>a${r.num}: ${tag} <span style="color:#999">(${(r.elapsed / 1000).toFixed(0)}с)</span></div>`;
     }
@@ -161,8 +181,8 @@
         const num = String(d.host || '').replace(/^a(\d+)$/, '$1');
         if (!inflight[num]) return;
         finishRobot(num, {
-            num, shell: d.shell, rover: d.rover, status: d.status,
-            unreachable: d.unreachable, elapsed: d.elapsed
+            num, ok: d.ok, status: d.status, unreachable: d.unreachable,
+            apiStatus: d.apiStatus, apiText: d.apiText, elapsed: d.elapsed
         });
     }
 
@@ -176,14 +196,14 @@
             inflight[num] = st;
 
             iframe.addEventListener('error', () => {
-                finishRobot(num, { num, shell: false, rover: null, status: null, unreachable: false, elapsed: 0 });
+                finishRobot(num, { num, ok: false, status: null, unreachable: false, apiStatus: 0, apiText: 'iframe error', elapsed: 0 });
             });
             document.body.appendChild(iframe);
 
-            // шёлл-потолок: хост не отдал SPA → PAGE: NO
+            // хост вообще не отвечает (нет даже iframe-контекста для probe)
             st.timer = setTimeout(() => {
-                finishRobot(num, { num, shell: false, rover: null, status: null, unreachable: false, elapsed: SHELL_TIMEOUT_MS });
-            }, SHELL_TIMEOUT_MS + 2000);
+                finishRobot(num, { num, ok: false, status: null, unreachable: false, apiStatus: 0, apiText: 'no response', elapsed: SHELL_TIMEOUT_MS });
+            }, SHELL_TIMEOUT_MS);
         });
     }
 
@@ -198,13 +218,11 @@
         runBtn.disabled = true; exportBtn.disabled = true; stopBtn.disabled = false;
 
         const total = nums.length;
-        let done = 0;
         for (let i = 0; i < total; i += BATCH_SIZE) {
             if (stopReq) break;
             const batch = nums.slice(i, i + BATCH_SIZE);
             setStatus(`Пачка ${Math.floor(i / BATCH_SIZE) + 1}/${Math.ceil(total / BATCH_SIZE)}: a${batch.join(', a')}…`);
             await Promise.all(batch.map(n => checkRobot(n)));
-            done = Math.min(i + BATCH_SIZE, total);
         }
 
         setStatus(stopReq ? `Остановлено (${results.length}/${total})` : `Готово (${results.length}/${total})`);
@@ -213,8 +231,8 @@
     }
 
     function copyReport() {
-        const ok = results.filter(r => r.shell && !r.unreachable).map(r => 'a' + r.num);
-        const no = results.filter(r => !r.shell || r.unreachable).map(r => 'a' + r.num);
+        const ok = results.filter(r => r.ok).map(r => 'a' + r.num);
+        const no = results.filter(r => !r.ok).map(r => 'a' + r.num);
         const text = ['ОК:', ok.join(', ') || '—', '', 'НЕТ:', no.join(', ') || '—'].join('\n');
         navigator.clipboard.writeText(text).then(() => setStatus('Отчёт скопирован'));
     }
