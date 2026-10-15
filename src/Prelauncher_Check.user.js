@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         Prelauncher Check
 // @namespace    http://tampermonkey.net/
-// @version      0.4.1
-// @description  Перебор роверов: проверка prelauncher-страниц в скрытом iframe по якорям (без таймеров)
+// @version      0.5.0
+// @description  Перебор роверов: скрытый iframe, якоря состояния без таймера ответа, живая диагностика
 // @author       You
 // @match        https://*.launcher.sdc.yandex-team.ru/*
 // @grant        none
@@ -15,61 +15,75 @@
 
     const LOG = '[PLC]';
     const CHILD_FLAG = 'plcheck=1';
-    const POLL_MS = 1000; // якоря появляются быстро
-    const HANG_MS = 8000; // watchdog: ни один якорь не появился — считаем «нет ответа»
+    const POLL_MS = 1000;
+    const SHELL_TIMEOUT_MS = 8000; // Потолок ТОЛЬКО для загрузки шёлла (.app__header)
+
+    const ERROR_RE = /network is unreachable|no route to host|connection refused|timeout|deadline exceeded|dial tcp/i;
 
     // ============ Дочерний контекст (iframe с ?plcheck=1) ============
-    // Собирает состояние по якорям и шлёт результат, как только он определён.
     if (location.search.includes(CHILD_FLAG)) {
         const target = window.opener || window.parent;
         if (target && target !== window) {
-            const t = setInterval(() => {
+            const start = Date.now();
+            let shellSeen = false;
+
+            // Значение блока по имени (любой класс elements__value-*)
+            function blockValue(name) {
+                for (const block of document.querySelectorAll('.elements__text')) {
+                    const label = block.querySelector('.elements__text-name');
+                    if (label && label.textContent.trim() === name) {
+                        const span = block.querySelector('.elements__text-value span');
+                        if (span) {
+                            const t = span.textContent.trim();
+                            if (t) return t;
+                        }
+                        break;
+                    }
+                }
+                return null;
+            }
+
+            function snapshot() {
                 const header = document.querySelector('.app__header');
+                return {
+                    shell: !!header,
+                    rover: blockValue('Rover name'),
+                    status: blockValue('Command status'),
+                    error: (document.body && ERROR_RE.test(document.body.innerText || '')) || null
+                };
+            }
 
-                // Якорь 1: не загружено приложение — дальше нечего смотреть
-                if (!header) return;
+            const t = setInterval(() => {
+                const s = snapshot();
 
-                const bodyText = document.body.innerText || '';
+                // живая диагностика — родитель показывает статус каждый опрос
+                target.postMessage({
+                    type: 'PLCHECK_STATE',
+                    host: location.hostname.split('.')[0],
+                    shell: s.shell,
+                    rover: s.rover,
+                    status: s.status,
+                    error: s.error,
+                    elapsed: Date.now() - start
+                }, '*');
 
-                // Якорь 2: Rover name заполнен (elements__value-init рядом с «Rover name»)
-                let roverName = null;
-                const nameBlocks = document.querySelectorAll('.elements__text');
-                for (const block of nameBlocks) {
-                    const label = block.querySelector('.elements__text-name');
-                    if (label && label.textContent.trim() === 'Rover name') {
-                        const span = block.querySelector('.elements__value-init span, .elements__value-loaded span');
-                        if (span) roverName = span.textContent.trim();
-                        break;
-                    }
-                }
+                if (s.shell) shellSeen = true;
 
-                // Якорь 3: Command status (elements__value-loaded/-loading рядом с «Command status»)
-                let cmdStatus = null;
-                for (const block of nameBlocks) {
-                    const label = block.querySelector('.elements__text-name');
-                    if (label && label.textContent.trim() === 'Command status') {
-                        const span = block.querySelector('.elements__value-loaded span, .elements__value-loading span, .elements__value-init span');
-                        if (span) cmdStatus = span.textContent.trim();
-                        break;
-                    }
-                }
-
-                // Якорь 4: ровер недостижим по сети — решающий
-                const unreachable = /network is unreachable|connection refused|no route to host|timeout/i.test(bodyText);
-
-                // Проверяем, что состояние решающее: rover name заполнился ИЛИ status отрисовался ИЛИ сеть недоступна
-                const decided = (roverName && roverName.startsWith('a')) || !!cmdStatus || unreachable;
+                // якоря решающего состояния:
+                // 1) бекенд ответил — заполнены Rover name или Command status
+                // 2) бекенд принёс ошибку сети — текст ошибки в body
+                const decided = !!s.rover || !!s.status || !!s.error;
                 if (!decided) return;
 
                 clearInterval(t);
                 target.postMessage({
                     type: 'PLCHECK_RESULT',
                     host: location.hostname.split('.')[0],
-                    page: header.textContent.trim() === 'Prelauncher',
-                    rover: roverName,
-                    status: cmdStatus,
-                    unreachable,
-                    branch: bodyText.includes('Current branch')
+                    shell: s.shell,
+                    rover: s.rover,
+                    status: s.status,
+                    error: s.error,
+                    elapsed: Date.now() - start
                 }, '*');
             }, POLL_MS);
         }
@@ -77,11 +91,11 @@
     }
 
     // ============ Родитель: панель перебора ============
-    let panel, input, resultsBox, runBtn, exportBtn, stopBtn;
+    let panel, input, resultsBox, runBtn, exportBtn, stopBtn, liveRow = null;
     let running = false, stopReq = false;
     let iframe = null;
     let pendingResolve = null;
-    const results = []; // {num, page, rover, status, unreachable, branch}
+    const results = [];
 
     function createPanel() {
         if (document.getElementById('pl-check-panel')) return;
@@ -123,30 +137,26 @@
         document.getElementById('pl-check-close').addEventListener('click', teardown);
         exportBtn.addEventListener('click', copyReport);
 
-        window.addEventListener('message', onChildResult);
+        window.addEventListener('message', onMsg);
     }
 
     function parseNumbers(text) {
         const seen = new Set();
         const out = [];
         for (const raw of text.match(/\d+/g) || []) {
-            const n = String(parseInt(raw, 10)); // убираем ведущие нули
+            const n = String(parseInt(raw, 10));
             if (!seen.has(n)) { seen.add(n); out.push(n); }
         }
         return out;
     }
 
     function rowHtml(r) {
-        // доступность ровера: страница отвечает И ровер ответил (не unreachable)
-        const ok = r.page && !r.unreachable;
         let tag;
-        if (!r.page) tag = '<b style="color:#b00">PAGE: NO</b>';
-        else if (r.unreachable) tag = '<b style="color:#b00">UNREACHABLE</b>';
+        if (!r.shell) tag = '<b style="color:#b00">PAGE: NO</b>'; // шёлл не загрузился
+        else if (r.error) tag = `<b style="color:#b00">UNREACHABLE</b> <span style="color:#999">${r.error}</span>`;
         else if (r.rover) tag = `<b style="color:green">OK</b> <span style="color:#999">${r.status || ''}</span>`;
         else tag = '<b style="color:#b00">NO DATA</b>';
-        return `<div>a${r.num}: ${tag}`
-            + ` | branch: ${r.branch ? 'YES' : 'no'}`
-            + `</div>`;
+        return `<div>a${r.num}: ${tag} <span style="color:#999">(${(r.elapsed / 1000).toFixed(0)}с)</span></div>`;
     }
 
     function setStatus(text) {
@@ -157,22 +167,32 @@
         if (iframe) { iframe.remove(); iframe = null; }
     }
 
-    function onChildResult(e) {
-        if (!e.data || e.data.type !== 'PLCHECK_RESULT' || !pendingResolve) return;
-        const r = {
-            num: String(e.data.host).replace(/^a(\d+)$/, '$1'),
-            page: e.data.page,
-            rover: e.data.rover,
-            status: e.data.status,
-            unreachable: e.data.unreachable,
-            branch: e.data.branch
-        };
+    function finishRow(r) {
         results.push(r);
+        if (liveRow) liveRow.remove();
         resultsBox.insertAdjacentHTML('beforeend', rowHtml(r));
         removeIframe();
         const resolve = pendingResolve;
         pendingResolve = null;
-        resolve();
+        if (resolve) resolve();
+    }
+
+    function onMsg(e) {
+        const d = e.data;
+        if (!d) return;
+        const num = String(d.host || '').replace(/^a(\d+)$/, '$1');
+
+        if (d.type === 'PLCHECK_STATE' && pendingResolve) {
+            // живая диагностика
+            const line = document.createElement('div');
+            line.textContent = `a${num}: ${d.shell ? (d.error ? 'ошибка сети…' : 'шёлл жив, ждём бекенда') : 'шёлл не загрузился'} (${Math.round(d.elapsed / 1000)}с)`;
+            if (liveRow) liveRow.remove();
+            liveRow = line;
+            resultsBox.appendChild(line);
+            return;
+        }
+        if (d.type !== 'PLCHECK_RESULT' || !pendingResolve) return;
+        finishRow({ num, shell: d.shell, rover: d.rover, status: d.status, error: d.error, elapsed: d.elapsed });
     }
 
     function checkRobot(num) {
@@ -182,25 +202,21 @@
             iframe.style.cssText = 'position:fixed;width:1px;height:1px;left:-9999px;top:0;border:0;visibility:hidden;';
             iframe.src = `https://a${num}.launcher.sdc.yandex-team.ru/prelauncher/?${CHILD_FLAG}`;
             iframe.addEventListener('error', () => {
-                results.push({ num, page: false, rover: null, status: null, unreachable: false, branch: false });
-                resultsBox.insertAdjacentHTML('beforeend', `<div>a${num}: <b style="color:#b00">ERR</b> iframe не загрузился</div>`);
+                finishRow({ num, shell: false, rover: null, status: null, error: null, elapsed: 0 });
+            });
+            document.body.appendChild(iframe);
+            // Потолок ТОЛЬКО для шёлла: если .app__header так и не появился — страница мертва.
+            // Шёлл жив → ждём якорей ответа бекенда без таймера (медленные роботы не бьются).
+            setTimeout(() => {
+                if (!pendingResolve) return;
+                results.push({ num, shell: false, rover: null, status: null, error: null, elapsed: SHELL_TIMEOUT_MS });
+                if (liveRow) liveRow.remove();
+                resultsBox.insertAdjacentHTML('beforeend', `<div>a${num}: <b style="color:#b00">NO RESPOND</b> (шёлл не загрузился за ${SHELL_TIMEOUT_MS / 1000}с)</div>`);
                 removeIframe();
                 const res2 = pendingResolve;
                 pendingResolve = null;
-                if (res2) res2();
-            });
-            document.body.appendChild(iframe);
-            // watchdog: страница зависла и не показала ни одного якоря (напр. a2698)
-            setTimeout(() => {
-                if (pendingResolve) {
-                    results.push({ num, page: false, rover: null, status: null, unreachable: false, branch: false });
-                    resultsBox.insertAdjacentHTML('beforeend', `<div>a${num}: <b style="color:#b00">NO RESPOND</b> (${HANG_MS / 1000}с, якорей нет)</div>`);
-                    removeIframe();
-                    const res2 = pendingResolve;
-                    pendingResolve = null;
-                    res2();
-                }
-            }, HANG_MS);
+                res2();
+            }, SHELL_TIMEOUT_MS + 2000); // +2с запаса: шёлл мог появиться, но iframe-скрипт ещё не успел отписаться
         });
     }
 
@@ -226,8 +242,8 @@
     }
 
     function copyReport() {
-        const ok = results.filter(r => r.page && !r.unreachable).map(r => 'a' + r.num);
-        const no = results.filter(r => !(r.page && !r.unreachable)).map(r => 'a' + r.num);
+        const ok = results.filter(r => r.shell && !r.error).map(r => 'a' + r.num);
+        const no = results.filter(r => !(r.shell && !r.error)).map(r => 'a' + r.num);
         const text = ['ОК:', ok.join(', ') || '—', '', 'НЕТ:', no.join(', ') || '—'].join('\n');
         navigator.clipboard.writeText(text).then(() => setStatus('Отчёт скопирован'));
     }
@@ -235,7 +251,7 @@
     function teardown() {
         stopReq = true;
         removeIframe();
-        window.removeEventListener('message', onChildResult);
+        window.removeEventListener('message', onMsg);
         panel.remove();
     }
 
