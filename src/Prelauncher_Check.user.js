@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         Prelauncher Check
 // @namespace    http://tampermonkey.net/
-// @version      0.7.0
-// @description  Перебор роверов: скрытый iframe. Правило: "connect: network is unreachable" → мёртв, остальное → ОК
+// @version      0.8.0
+// @description  Перебор роверов: скрытые iframe пачками по 5. Правило: "connect: network is unreachable" → мёртв, остальное → ОК
 // @author       You
 // @match        https://*.launcher.sdc.yandex-team.ru/*
 // @grant        none
@@ -16,8 +16,9 @@
     const LOG = '[PLC]';
     const CHILD_FLAG = 'plcheck=1';
     const POLL_MS = 1000;
-    const SHELL_TIMEOUT_MS = 10000; // шёлл не загрузился → страница мертва
-    const DATA_TIMEOUT_MS = 30000;  // шёлл жив, данные не пришли → по правилу это всё равно ОК
+    const SHELL_TIMEOUT_MS = 10000;
+    const DATA_TIMEOUT_MS = 30000;
+    const BATCH_SIZE = 5;
 
     const UNREACHABLE_RE = /connect: network is unreachable/;
 
@@ -46,16 +47,13 @@
             const t = setInterval(() => {
                 const header = document.querySelector('.app__header');
                 if (!header) return;
-                const shell = true;
 
                 const bodyText = document.body.innerText || '';
                 const unreachable = UNREACHABLE_RE.test(bodyText);
                 const rover = blockValue('Rover name');
                 const status = blockValue('Command status');
-
-                // Правило: «connect: network is unreachable» = 100% недоступен.
-                // Данные пришли или шёлл жив дольше DATA_TIMEOUT — в остальном случае всё ОК.
                 const dataTimeout = Date.now() - start > DATA_TIMEOUT_MS;
+
                 if (!unreachable && !rover && !status && !dataTimeout) return;
 
                 clearInterval(t);
@@ -63,7 +61,7 @@
                 target.postMessage({
                     type: 'PLCHECK_RESULT',
                     host: location.hostname.split('.')[0],
-                    shell,
+                    shell: true,
                     rover,
                     status,
                     unreachable,
@@ -74,13 +72,10 @@
         return;
     }
 
-    // ============ Родитель: панель перебора ============
-    let panel, input, resultsBox, runBtn, exportBtn, stopBtn, liveRow = null;
+    // ============ Родитель: панель перебора (пачки по BATCH_SIZE) ============
+    let panel, input, resultsBox, runBtn, exportBtn, stopBtn;
     let running = false, stopReq = false;
-    let iframe = null;
-    let pendingResolve = null;
-    let currentNum = null;
-    const lastState = {}; // num -> {shellSeen}
+    const inflight = {}; // num -> {iframe, resolve, timer}
     const results = [];
 
     function createPanel() {
@@ -138,10 +133,10 @@
 
     function rowHtml(r) {
         let tag;
-        if (r.unreachable) tag = '<b style="color:#b00">UNREACHABLE</b>'; // 100% мёртв
+        if (r.unreachable) tag = '<b style="color:#b00">UNREACHABLE</b>';
         else if (r.rover) tag = `<b style="color:green">OK</b> <span style="color:#999">${r.status || ''}</span>`;
-        else if (r.shell) tag = '<b style="color:green">OK</b> <span style="color:#999">без данных</span>'; // по правилу: остальное = ОК
-        else tag = '<b style="color:#b00">PAGE: NO</b>'; // шёлл не загрузился (502 и т.п.)
+        else if (r.shell) tag = '<b style="color:green">OK</b> <span style="color:#999">без данных</span>';
+        else tag = '<b style="color:#b00">PAGE: NO</b>';
         return `<div>a${r.num}: ${tag} <span style="color:#999">(${(r.elapsed / 1000).toFixed(0)}с)</span></div>`;
     }
 
@@ -149,25 +144,23 @@
         document.getElementById('pl-check-status').textContent = text;
     }
 
-    function removeIframe() {
-        if (iframe) { iframe.remove(); iframe = null; }
-    }
-
-    function finishRow(r) {
+    function finishRobot(num, r) {
+        const st = inflight[num];
+        if (!st) return;
+        if (st.iframe) st.iframe.remove();
+        if (st.timer) clearTimeout(st.timer);
+        delete inflight[num];
         results.push(r);
-        if (liveRow) { liveRow.remove(); liveRow = null; }
         resultsBox.insertAdjacentHTML('beforeend', rowHtml(r));
-        removeIframe();
-        const resolve = pendingResolve;
-        pendingResolve = null;
-        if (resolve) resolve();
+        st.resolve();
     }
 
     function onMsg(e) {
         const d = e.data;
-        if (!d || d.type !== 'PLCHECK_RESULT' || !pendingResolve) return;
+        if (!d || d.type !== 'PLCHECK_RESULT') return;
         const num = String(d.host || '').replace(/^a(\d+)$/, '$1');
-        finishRow({
+        if (!inflight[num]) return;
+        finishRobot(num, {
             num, shell: d.shell, rover: d.rover, status: d.status,
             unreachable: d.unreachable, elapsed: d.elapsed
         });
@@ -175,21 +168,21 @@
 
     function checkRobot(num) {
         return new Promise(resolve => {
-            pendingResolve = resolve;
-            currentNum = num;
-            lastState[num] = { shellSeen: false };
-            removeIframe(); // страховка: не плодим зависшие iframe
-            iframe = document.createElement('iframe');
+            const iframe = document.createElement('iframe');
             iframe.style.cssText = 'position:fixed;width:1px;height:1px;left:-9999px;top:0;border:0;visibility:hidden;';
             iframe.src = `https://a${num}.launcher.sdc.yandex-team.ru/prelauncher/?${CHILD_FLAG}`;
+
+            const st = { iframe, resolve, timer: null };
+            inflight[num] = st;
+
             iframe.addEventListener('error', () => {
-                finishRow({ num, shell: false, rover: null, status: null, unreachable: false, elapsed: 0 });
+                finishRobot(num, { num, shell: false, rover: null, status: null, unreachable: false, elapsed: 0 });
             });
             document.body.appendChild(iframe);
-            // шёлл могли не дождаться только если сам robots-хост не отдал страницу
-            setTimeout(() => {
-                if (!pendingResolve || currentNum !== num) return;
-                finishRow({ num, shell: false, rover: null, status: null, unreachable: false, elapsed: SHELL_TIMEOUT_MS });
+
+            // шёлл-потолок: хост не отдал SPA → PAGE: NO
+            st.timer = setTimeout(() => {
+                finishRobot(num, { num, shell: false, rover: null, status: null, unreachable: false, elapsed: SHELL_TIMEOUT_MS });
             }, SHELL_TIMEOUT_MS + 2000);
         });
     }
@@ -204,13 +197,17 @@
         resultsBox.innerHTML = '';
         runBtn.disabled = true; exportBtn.disabled = true; stopBtn.disabled = false;
 
-        for (let i = 0; i < nums.length; i++) {
+        const total = nums.length;
+        let done = 0;
+        for (let i = 0; i < total; i += BATCH_SIZE) {
             if (stopReq) break;
-            setStatus(`Проверяю a${nums[i]} (${i + 1}/${nums.length})…`);
-            await checkRobot(nums[i]);
+            const batch = nums.slice(i, i + BATCH_SIZE);
+            setStatus(`Пачка ${Math.floor(i / BATCH_SIZE) + 1}/${Math.ceil(total / BATCH_SIZE)}: a${batch.join(', a')}…`);
+            await Promise.all(batch.map(n => checkRobot(n)));
+            done = Math.min(i + BATCH_SIZE, total);
         }
 
-        setStatus(stopReq ? 'Остановлено' : 'Готово');
+        setStatus(stopReq ? `Остановлено (${results.length}/${total})` : `Готово (${results.length}/${total})`);
         runBtn.disabled = false; stopBtn.disabled = true; exportBtn.disabled = false;
         running = false;
     }
@@ -224,7 +221,11 @@
 
     function teardown() {
         stopReq = true;
-        removeIframe();
+        for (const num of Object.keys(inflight)) {
+            const st = inflight[num];
+            if (st.iframe) st.iframe.remove();
+            if (st.timer) clearTimeout(st.timer);
+        }
         window.removeEventListener('message', onMsg);
         panel.remove();
     }
