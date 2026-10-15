@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Prelauncher Check
 // @namespace    http://tampermonkey.net/
-// @version      0.5.0
+// @version      0.5.1
 // @description  Перебор роверов: скрытый iframe, якоря состояния без таймера ответа, живая диагностика
 // @author       You
 // @match        https://*.launcher.sdc.yandex-team.ru/*
@@ -26,6 +26,8 @@
         if (target && target !== window) {
             const start = Date.now();
             let shellSeen = false;
+            let lastLogged = null;
+            console.log(LOG, 'child started', location.hostname);
 
             // Значение блока по имени (любой класс elements__value-*)
             function blockValue(name) {
@@ -55,6 +57,10 @@
 
             const t = setInterval(() => {
                 const s = snapshot();
+                if (s.rover && s.rover !== lastLogged) {
+                    lastLogged = s.rover;
+                    console.log(LOG, 'state', s.shell ? 'shell' : 'no-shell', 'rover:', s.rover, 'status:', s.status, 'error:', s.error, `${((Date.now() - start) / 1000).toFixed(0)}s`);
+                }
 
                 // живая диагностика — родитель показывает статус каждый опрос
                 target.postMessage({
@@ -76,6 +82,7 @@
                 if (!decided) return;
 
                 clearInterval(t);
+                console.log(LOG, 'RESULT', s.shell ? 'shell-ok' : 'no-shell', 'rover:', s.rover, 'status:', s.status, 'error:', s.error, `${((Date.now() - start) / 1000).toFixed(0)}s`);
                 target.postMessage({
                     type: 'PLCHECK_RESULT',
                     host: location.hostname.split('.')[0],
