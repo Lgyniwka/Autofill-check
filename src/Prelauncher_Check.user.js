@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         Prelauncher Check
 // @namespace    http://tampermonkey.net/
-// @version      0.1.0
-// @description  Перебор роверов: последовательная проверка prelauncher-страниц (.app__header "Prelauncher", блок "Current branch")
+// @version      0.2.0
+// @description  Перебор роверов: последовательная проверка prelauncher-страниц в скрытом iframe (.app__header "Prelauncher", "Current branch")
 // @author       You
 // @match        https://*.launcher.sdc.yandex-team.ru/*
 // @grant        none
@@ -17,42 +17,45 @@
     const CHILD_FLAG = 'plcheck=1';
     const POLL_MS = 3000;
     const TIMEOUT_MS = 60000;
+    const FALLBACK_MS = TIMEOUT_MS + 5000;
 
-    // ============ Дочернее окно проверки (открывается родителем с ?plcheck=1) ============
+    // ============ Дочерний контекст (iframe с ?plcheck=1) ============
     if (location.search.includes(CHILD_FLAG)) {
-        if (window.opener) {
+        const target = window.opener || window.parent;
+        if (target && target !== window) {
             const start = Date.now();
             const t = setInterval(() => {
                 const header = document.querySelector('.app__header');
                 if (header) {
                     clearInterval(t);
-                    window.opener.postMessage({
+                    target.postMessage({
                         type: 'PLCHECK_RESULT',
                         host: location.hostname,
                         header: (header.innerText || '').trim(),
                         branch: document.body.innerText.includes('Current branch'),
                         elapsed: Date.now() - start
                     }, '*');
-                    window.close();
                 } else if (Date.now() - start > TIMEOUT_MS) {
                     clearInterval(t);
-                    window.opener.postMessage({
+                    target.postMessage({
                         type: 'PLCHECK_RESULT',
                         host: location.hostname,
                         header: null,
                         branch: false,
                         elapsed: Date.now() - start
                     }, '*');
-                    window.close();
                 }
             }, POLL_MS);
         }
-        return; // панель в окне проверки не нужна
+        return; // панель в iframe проверки не нужна
     }
 
     // ============ Родитель: панель перебора ============
     let panel, input, resultsBox, runBtn, exportBtn, stopBtn;
     let running = false, stopReq = false;
+    let iframe = null;
+    let pendingResolve = null;
+    const results = []; // {num, header, branch, elapsed}
 
     function createPanel() {
         if (document.getElementById('pl-check-panel')) return;
@@ -91,7 +94,7 @@
 
         runBtn.addEventListener('click', run);
         stopBtn.addEventListener('click', () => { stopReq = true; });
-        document.getElementById('pl-check-close').addEventListener('click', () => panel.remove());
+        document.getElementById('pl-check-close').addEventListener('click', teardown);
         exportBtn.addEventListener('click', copyReport);
 
         window.addEventListener('message', onChildResult);
@@ -107,8 +110,6 @@
         return out;
     }
 
-    const results = []; // {num, header, branch, elapsed}
-
     function rowHtml(r) {
         return `<div>a${r.num}: ${r.header === 'Prelauncher' ? '<b style="color:green">YES</b>' : '<b style="color:#b00">NO</b>'}`
             + ` | Current branch: ${r.branch ? '<b style="color:green">YES</b>' : 'no'}`
@@ -119,37 +120,40 @@
         document.getElementById('pl-check-status').textContent = text;
     }
 
+    function removeIframe() {
+        if (iframe) { iframe.remove(); iframe = null; }
+    }
+
     function onChildResult(e) {
         if (!e.data || e.data.type !== 'PLCHECK_RESULT' || !pendingResolve) return;
-        const num = e.data.host.replace(/^a(\d+)\..*$/, '$1');
+        const num = String(e.data.host).replace(/^a(\d+)\..*$/, '$1');
         const r = { num, header: e.data.header, branch: e.data.branch, elapsed: e.data.elapsed };
         results.push(r);
         resultsBox.insertAdjacentHTML('beforeend', rowHtml(r));
-        if (childWin && !childWin.closed) childWin.close();
-        childWin = null;
+        removeIframe();
         const resolve = pendingResolve;
         pendingResolve = null;
         resolve();
     }
 
-    let childWin = null;
-    let pendingResolve = null;
-
-    function openChild(num) {
+    function checkRobot(num) {
         return new Promise(resolve => {
             pendingResolve = resolve;
-            childWin = window.open(`https://a${num}.launcher.sdc.yandex-team.ru/prelauncher/?${CHILD_FLAG}`, '_blank', 'width=400,height=300');
-            // страховка: если дочернее окно не открылось (блокировщик)
+            iframe = document.createElement('iframe');
+            iframe.style.cssText = 'position:fixed;width:1px;height:1px;left:-9999px;top:0;border:0;visibility:hidden;';
+            iframe.src = `https://a${num}.launcher.sdc.yandex-team.ru/prelauncher/?${CHILD_FLAG}`;
+            document.body.appendChild(iframe);
+            // страховка: iframe не загрузился / скрипт в нём не выполнился (X-Frame-Options и т.п.)
             setTimeout(() => {
                 if (pendingResolve) {
-                    const r = { num, header: null, branch: false, elapsed: 0 };
-                    results.push(r);
-                    resultsBox.insertAdjacentHTML('beforeend', `<div>a${num}: <b style="color:#b00">ERR</b> окно заблокировано</div>`);
+                    results.push({ num, header: null, branch: false, elapsed: 0 });
+                    resultsBox.insertAdjacentHTML('beforeend', `<div>a${num}: <b style="color:#b00">ERR</b> iframe не загрузился</div>`);
+                    removeIframe();
                     const res2 = pendingResolve;
                     pendingResolve = null;
                     res2();
                 }
-            }, TIMEOUT_MS + 5000);
+            }, FALLBACK_MS);
         });
     }
 
@@ -166,7 +170,7 @@
         for (let i = 0; i < nums.length; i++) {
             if (stopReq) break;
             setStatus(`Проверяю a${nums[i]} (${i + 1}/${nums.length})…`);
-            await openChild(nums[i]);
+            await checkRobot(nums[i]);
         }
 
         setStatus(stopReq ? 'Остановлено' : 'Готово');
@@ -179,6 +183,13 @@
         const no = results.filter(r => r.header !== 'Prelauncher').map(r => 'a' + r.num);
         const text = ['ДА:', yes.join(', ') || '—', '', 'НЕТ:', no.join(', ') || '—'].join('\n');
         navigator.clipboard.writeText(text).then(() => setStatus('Отчёт скопирован'));
+    }
+
+    function teardown() {
+        stopReq = true;
+        removeIframe();
+        window.removeEventListener('message', onChildResult);
+        panel.remove();
     }
 
     createPanel();
