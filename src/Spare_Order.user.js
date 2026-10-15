@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Spare Parts Order Panel
 // @namespace    https://github.com/Lgyniwka/Autofill-check
-// @version      0.1
+// @version      0.2
 // @description  Автономный заказ запчастей (SDCWH): панель появляется в тикете после перехода «Заказать запчасти» (когда в комментариях видим iframe формы 13693051). Классический диалог пресета/локации, локация сокращена до «Рободоставка Арма». Форма заполняется в новом окне и отправляется. БЕЗ заполнения/закрытия тикета — флоу тикета остаётся за командой.
 // @author       You
 // @match        https://st.yandex-team.ru/*
@@ -431,9 +431,11 @@
         showModal('Сколько заказываем?', ['1', '2', '3', '4', '5', '6'].map(v => ({ v, label: v })), onPick);
     }
 
-    // ---------- Плавающая панель ----------
+    // ---------- Плавающая панель: drag, сворачивание, позиция ----------
     let panelShown = false;
-    let handled = new Set(); // src iframe, для которых панель уже показывали
+    let handled = new Set(); // src iframe, для которых панель уже показывали/скрыли
+    const STORAGE_KEY = 'so-panel-position';
+    const COLLAPSE_KEY = 'so-panel-collapsed';
 
     const PRESET_BUTTONS = [
         { v: 'mic', label: 'Жгут микрофона' },
@@ -449,47 +451,101 @@
         panel.innerHTML = `
             <div class="sop-header">
                 <span>Заказ запчастей</span>
-                <button class="sop-hide" title="Скрыть">✕</button>
+                <span class="sop-controls">
+                    <button class="sop-toggle" title="Свернуть">▾</button>
+                    <button class="sop-hide" title="Скрыть">✕</button>
+                </span>
             </div>
-            <div class="sop-note">Локация: ${LOCATION_NAME}</div>
             <div class="sop-body">
+                <div class="sop-note">Локация: ${LOCATION_NAME}</div>
                 ${PRESET_BUTTONS.map(b => `<button class="sop-btn" data-preset="${b.v}">${b.label}</button>`).join('')}
             </div>
         `;
         const style = document.createElement('style');
         style.textContent = `
-            #so-order-panel { position: fixed; right: 16px; top: 90px; z-index: 99999; background: #1f1f1f; color: #eee; border-radius: 10px; padding: 10px; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; font-size: 13px; box-shadow: 0 4px 20px rgba(0,0,0,0.35); min-width: 200px; user-select: none; }
-            #so-order-panel .sop-header { font-weight: 600; margin-bottom: 6px; display: flex; align-items: center; justify-content: space-between; gap: 8px; }
-            #so-order-panel .sop-hide { background: none; border: none; color: #aaa; cursor: pointer; font-size: 14px; padding: 2px 6px; border-radius: 4px; line-height: 1; }
-            #so-order-panel .sop-hide:hover { color: #fff; background: #333; }
+            #so-order-panel { position: fixed; z-index: 99999; background: #1f1f1f; color: #eee; border-radius: 10px; padding: 10px; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; font-size: 13px; box-shadow: 0 4px 20px rgba(0,0,0,0.35); min-width: 200px; user-select: none; cursor: move; }
+            #so-order-panel .sop-header { font-weight: 600; margin-bottom: 6px; display: flex; align-items: center; justify-content: space-between; gap: 8px; cursor: move; }
+            #so-order-panel .sop-controls { display: flex; align-items: center; gap: 2px; cursor: move; }
+            #so-order-panel .sop-toggle, #so-order-panel .sop-hide { background: none; border: none; color: #aaa; cursor: pointer; font-size: 14px; padding: 2px 6px; border-radius: 4px; line-height: 1; }
+            #so-order-panel .sop-toggle:hover, #so-order-panel .sop-hide:hover { color: #fff; background: #333; }
+            #so-order-panel.collapsed .sop-body { display: none; }
+            #so-order-panel.collapsed { padding-bottom: 6px; }
+            #so-order-panel.collapsed .sop-header { margin-bottom: 0; }
             #so-order-panel .sop-note { font-size: 11px; opacity: 0.7; margin-bottom: 6px; }
             #so-order-panel .sop-btn { display: block; width: 100%; margin: 4px 0; padding: 7px 10px; border: none; border-radius: 6px; background: #3b82f6; color: white; font-size: 13px; cursor: pointer; text-align: left; transition: background 0.15s; }
             #so-order-panel .sop-btn:hover { background: #2563eb; }
             #so-order-panel .sop-btn.success { background: #22c55e; }
         `;
         document.head.appendChild(style);
-        panel.querySelector('.sop-hide').addEventListener('click', () => {
+
+        // Сворачивание (сохраняется между страницами)
+        function applyCollapse(collapsed) {
+            panel.classList.toggle('collapsed', collapsed);
+            const toggle = panel.querySelector('.sop-toggle');
+            toggle.textContent = collapsed ? '▸' : '▾';
+            toggle.title = collapsed ? 'Развернуть' : 'Свернуть';
+            if (collapsed) panel.style.width = panel.getBoundingClientRect().width + 'px';
+            else panel.style.width = '';
+        }
+        if (localStorage.getItem(COLLAPSE_KEY) === '1') applyCollapse(true);
+        panel.querySelector('.sop-toggle').addEventListener('click', e => {
+            e.stopPropagation();
+            const collapsed = !panel.classList.contains('collapsed');
+            applyCollapse(collapsed);
+            localStorage.setItem(COLLAPSE_KEY, collapsed ? '1' : '0');
+        });
+
+        // Скрытие панели (до появления нового iframe заказа)
+        panel.querySelector('.sop-hide').addEventListener('click', e => {
+            e.stopPropagation();
             panel.remove();
-            // Панель скрыли вручную — не показывать снова для этого же iframe
             const fr = findOrderIframe();
-            if (fr) handled.add(fr.src);
+            if (fr && fr.src) handled.add(fr.src);
             panelShown = false;
         });
+
+        // Перетаскивание: позиция сохраняется, центрируется только при первом показе
+        let savedPos = null;
+        try { savedPos = JSON.parse(localStorage.getItem(STORAGE_KEY)); } catch (e) {}
+        if (savedPos && savedPos.left != null) {
+            panel.style.left = savedPos.left + 'px';
+            panel.style.top = savedPos.top + 'px';
+            panel.style.right = 'auto';
+        } else {
+            const w = panel.offsetWidth;
+            const h = panel.offsetHeight;
+            panel.style.left = Math.max(0, Math.round((window.innerWidth - w) / 2)) + 'px';
+            panel.style.top = Math.max(0, Math.round((window.innerHeight - h) / 2)) + 'px';
+            panel.style.right = 'auto';
+        }
+        let isDragging = false, offsetX, offsetY;
+        panel.addEventListener('mousedown', e => {
+            if (e.target.closest('.sop-btn, .sop-toggle, .sop-hide')) return;
+            isDragging = true;
+            offsetX = e.clientX - panel.getBoundingClientRect().left;
+            offsetY = e.clientY - panel.getBoundingClientRect().top;
+            panel.style.cursor = 'grabbing';
+        });
+        document.addEventListener('mousemove', e => {
+            if (!isDragging) return;
+            panel.style.left = (e.clientX - offsetX) + 'px';
+            panel.style.top = (e.clientY - offsetY) + 'px';
+            panel.style.right = 'auto';
+        });
+        document.addEventListener('mouseup', () => {
+            if (!isDragging) return;
+            isDragging = false;
+            panel.style.cursor = 'move';
+            const rect = panel.getBoundingClientRect();
+            localStorage.setItem(STORAGE_KEY, JSON.stringify({ left: rect.left, top: rect.top }));
+        });
+
         panel.addEventListener('click', e => {
             const btn = e.target.closest('.sop-btn');
             if (!btn) return;
-            const preset = btn.dataset.preset;
-            startOrderFlow(preset);
+            startOrderFlow(btn.dataset.preset);
         });
-        return panel;
-    }
-
-    function ensurePanelInDom(panel, style) {
-        if (!document.body) return;
-        if (!style.isConnected) document.head.appendChild(style);
-        if (!document.getElementById('so-order-panel')) {
-            document.body.appendChild(panel);
-        }
+        return { panel, style };
     }
 
     // ---------- Флоу заказа: диалог → новое окно → ждём SO_ORDER_DONE ----------
@@ -551,23 +607,45 @@
     }
 
     // ---------- Слежение за появлением формы заказа в комментариях ----------
-    function checkForOrderForm() {
-        const fr = findOrderIframe();
-        if (!fr || !fr.src) return;
-        if (handled.has(fr.src)) return;
-        handled.add(fr.src);
-        if (panelShown || document.getElementById('so-order-panel')) return;
-        panelShown = true;
-        const panel = buildPanel();
-        // style уже внутри buildPanel создан, но для страховки пересоздаём ссылку
-        const styleEl = [...document.querySelectorAll('style')].pop();
-        document.body.appendChild(panel);
-        showToast('Прожат «Заказать запчасти» — панель заказа запчастей открыта', 5000);
-        new MutationObserver(() => ensurePanelInDom(panel, styleEl))
-            .observe(document.documentElement, { childList: true, subtree: true });
+    // Базлайн: если форма заказа УЖЕ есть в тикете (тикет на заказ запчастей
+    // оформлен ранее) — панель НЕ показываем. Показываем только когда iframe
+    // появляется ВНОВЬ после клика «Заказать запчасти».
+    function allOrderIframes() {
+        return [...document.querySelectorAll('iframe')].filter(f => f.src && ORDER_FORM_RE.test(f.src));
     }
 
-    const obs = new MutationObserver(() => checkForOrderForm());
+    function baselineExisting() {
+        allOrderIframes().forEach(f => handled.add(f.src));
+    }
+    // Комментарии грузятся асинхронно: даём им 10с на загрузку и после этого
+    // фиксируем базлайн. Всё, что появилось раньше порога — считаем «уже было».
+    setTimeout(baselineExisting, 10000);
+
+    function checkForOrderForm(skipBaselineWindow) {
+        const frames = allOrderIframes();
+        const fresh = frames.find(f => !handled.has(f.src));
+        if (!fresh) return;
+        // В окне асинхронной загрузки старого тикета — игнорируем (базлайн ещё не зафиксирован)
+        if (skipBaselineWindow) { handled.add(fresh.src); return; }
+        handled.add(fresh.src);
+        if (panelShown || document.getElementById('so-order-panel')) return;
+        panelShown = true;
+        const { panel, style } = buildPanel();
+        document.body.appendChild(panel);
+        showToast('Прожат «Заказать запчасти» — панель заказа запчастей открыта', 5000);
+        // Страховка: SPA может перерисовать body — пересоздаём панель
+        new MutationObserver(() => {
+            if (!document.body) return;
+            if (!style.isConnected) document.head.appendChild(style);
+            if (!document.getElementById('so-order-panel')) document.body.appendChild(panel);
+        }).observe(document.documentElement, { childList: true, subtree: true });
+    }
+
+    const BASELINE_MS = 10000;
+    const startedAt = Date.now();
+    const obs = new MutationObserver(() => {
+        checkForOrderForm(Date.now() - startedAt < BASELINE_MS);
+    });
     obs.observe(document.documentElement, { childList: true, subtree: true });
-    checkForOrderForm();
+    checkForOrderForm(true);
 })();
