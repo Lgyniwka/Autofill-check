@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ST Ticket Self-Check
 // @namespace    http://tampermonkey.net/
-// @version      5.26
+// @version      5.28
 // @description  Самопроверка + форма учёта + комментарии. Переходы/поля/резолюция — через API Stracker
 // @author       You
 // @match        https://st.yandex-team.ru/*
@@ -655,6 +655,12 @@
         flag: 94609                  // ROBOT_BODY_FLAG
     };
 
+    // Тег Startrek-тикета по пресету (добавляется через API, не затирает
+    // существующие — POST /tags/_add, а не PATCH)
+    const PRESET_TAGS = {
+        leafSprings: 'speed_one'
+    };
+
     // Код дефекта по умолчанию по пресету (если не передан с панели)
     const PRESET_DEFECTS = {
         flag: 'BD-02'
@@ -681,6 +687,17 @@
                 });
             } catch (e) {
                 console.warn('[ST] PATCH компонента/дедлайна не прошёл:', e.status, String(e.text || '').slice(0, 300));
+            }
+            // Тег пресета (рессоры → speed_one): Startrek-тикет, поле «Теги»
+            // в «Параметрах». Ставим ДО перехода «Обработан».
+            const presetTag = PRESET_TAGS[preset];
+            if (presetTag) {
+                try {
+                    await apiRequest('POST', `https://st-api.yandex-team.ru/v3/issues/${issueKey}/tags/_add`, [presetTag]);
+                    console.log('[ST] Тег добавлен:', presetTag);
+                } catch (e) {
+                    console.warn('[ST] Добавление тега не прошло:', e.status, String(e.text || '').slice(0, 300));
+                }
             }
             const okTreated = await runTransition(issueKey, ['передать механикам', 'treated'], 8000);
             console.log('[ST] Переход в «Обработан»: ' + (okTreated ? 'выполнен' : 'не найден'));
@@ -728,6 +745,13 @@
             // Код дефекта: с панели (рессоры CH-01..CH-05), из PRESET_DEFECTS
             // (флажок BD-02) или '0'
             await setDefectCodeApi(issueKey, opts.defectCode ? opts.defectCode.split(' - ')[0] : (PRESET_DEFECTS[preset] || '0'));
+            // Блокер (рессоры): тикет НЕ закрываем — финальный шаг пользователь
+            // прожимает сам.
+            if (opts.isBlocker) {
+                console.log('[ST] Блокер: остановка перед закрытием — закрывает пользователь');
+                showToast(presetLabel + ': блокер — закрой тикет вручную', 7000);
+                return;
+            }
             await runTransition(issueKey, ['closed', 'closedMeta'], 10000, { resolution: 'fixed' });
             const elapsedSec = ((Date.now() - startedAt) / 1000).toFixed(1);
             showToast(presetLabel + ': закрыт за ' + elapsedSec + ' сек', 7000);

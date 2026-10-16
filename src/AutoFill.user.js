@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Accounting Form AutoFill
 // @namespace    https://github.com/Lgyniwka/Autofill-check
-// @version      2.32
+// @version      2.33
 // @description  Плавающая панель + отправка комментария + переход статусов. Пресеты: QR, ППР (форма осмотра), жгут микрофонов, АКБ
 // @author       You
 // @match        https://tools.sdc.yandex-team.ru/accounting-fleet-works*
@@ -1002,32 +1002,6 @@
         });
     }
 
-    // Проставление тега в «Параметрах» тикета учёта (поле «Теги»).
-    // Best-effort: кликаем по FieldView «Теги» → вводим текст →
-    // выбираем подсказку → сохраняем. Ошибки не ломают основной флоу.
-    function setTicketTag(tagName) {
-        try {
-            const titleEl = document.querySelector('.FieldView-Title[title="Теги"]');
-            if (!titleEl) { console.warn('[AF] Поле «Теги» не найдено'); return; }
-            const field = titleEl.closest('.FieldView') || titleEl.parentElement;
-            const container = titleEl.closest('.FieldView-TitleContainer') || field;
-            container.click();
-            setTimeout(() => {
-                try {
-                    const input = field.querySelector('input[placeholder], input:not([type="hidden"])');
-                    if (!input) { console.warn('[AF] В поле «Теги» нет input'); return; }
-                    forceSetValue(input, tagName);
-                    setTimeout(() => {
-                        const sugg = [...document.querySelectorAll('li, [class*="suggest" i], [class*="Suggest" i], [class*="popup" i] *, [class*="menu" i] *')]
-                            .find(el => el.textContent.trim() === tagName);
-                        if (sugg) sugg.click(); else input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', keyCode: 13, which: 13, bubbles: true }));
-                        setTimeout(() => { clickSaveButton(); console.log('[AF] Тег поставлен:', tagName); }, 400);
-                    }, 600);
-                } catch (e) { console.warn('[AF] Ошибка в поле «Теги»:', e); }
-            }, 500);
-        } catch (e) { console.warn('[AF] setTicketTag:', e); }
-    }
-
     function doAction(btn, searchText, matchText, commentText, action, onSaved) {
         const input = document.querySelector('input[placeholder="Добавить работы"]');
         if (!input) return alert('Поле не найдено');
@@ -1238,7 +1212,7 @@
         if (action === 'leafSprings') {
             // Замена рессор: 1) работа в учёте (4 варианта), 2) точное кол-во
             // для заказа, 3) блокер/не блокер, 4) код дефекта CH-01..CH-05,
-            // 5) локация. Тег speed_one в «Параметрах» — всегда.
+            // 5) локация. Тег speed_one ставит Self_check через API (PRESET_TAGS).
             // Для блокера позже добавим закрытие тикета на осмотр.
             const DEFECT_CODES = [
                 'CH-01 - Не прикручено/ не затянуто',
@@ -1252,7 +1226,8 @@
                     showPickModal('Блокер?', ['Блокер', 'НЕ блокер'], blockerChoice => {
                         showPickModal('Код дефекта?', DEFECT_CODES, defectCode => {
                             showLocationModal((locationName, locationId) => {
-                                setTicketTag('speed_one');
+                                // Тег speed_one на Startrek-тикет ставит Self_check
+                                // через API (PRESET_TAGS), не здесь.
                                 doAction(btn, 'рессор', workName, 'Заменили ' + quantity + ' рессор', action, () => {
                                     window.parent.postMessage({
                                         type: 'ST_HELPER_MICROPHONE_ORDER',
