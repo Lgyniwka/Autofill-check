@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ST Ticket Self-Check
 // @namespace    http://tampermonkey.net/
-// @version      5.28
+// @version      5.29
 // @description  Самопроверка + форма учёта + комментарии. Переходы/поля/резолюция — через API Stracker
 // @author       You
 // @match        https://st.yandex-team.ru/*
@@ -694,7 +694,11 @@
             if (presetTag) {
                 try {
                     await apiRequest('POST', `https://st-api.yandex-team.ru/v3/issues/${issueKey}/tags/_add`, [presetTag]);
-                    console.log('[ST] Тег добавлен:', presetTag);
+                    // Верификация: перечитываем теги тикета и проверяем наличие
+                    const rv = await apiRequest('GET', `https://st-api.yandex-team.ru/v3/issues/${issueKey}?fields=tags`);
+                    const tagsNow = (rv.data && rv.data.tags) || [];
+                    if (tagsNow.includes(presetTag)) console.log('[ST] Тег добавлен и подтверждён:', presetTag, '| все теги:', tagsNow);
+                    else console.warn('[ST] Тег НЕ виден после добавления. Текущие теги:', tagsNow);
                 } catch (e) {
                     console.warn('[ST] Добавление тега не прошло:', e.status, String(e.text || '').slice(0, 300));
                 }
@@ -1138,6 +1142,26 @@
                     rows.map(c => `'${c.name}': ${c.id},`).join('\n'));
             } catch (e) {
                 console.warn('[ST] Не получил компоненты:', e.status, String(e.text || '').slice(0, 300));
+            }
+        }
+
+        // Утилита: добавить тег тикету и проверить.
+        //   window.postMessage({ type: 'ST_ADD_TAG', tag: 'speed_one', key: 'SDCFLEETOPS-395833' }, '*')
+        // key не обязателен — берётся текущий тикет со страницы.
+        if (event.data.type === 'ST_ADD_TAG') {
+            const tag = String(event.data.tag || '').trim();
+            const key = event.data.key || getTicketKey();
+            if (!tag || !key) { console.warn('[ST] ST_ADD_TAG: нужен tag и key'); return; }
+            try {
+                await apiRequest('POST', `https://st-api.yandex-team.ru/v3/issues/${key}/tags/_add`, [tag]);
+                const rv = await apiRequest('GET', `https://st-api.yandex-team.ru/v3/issues/${key}?fields=tags`);
+                const tagsNow = (rv.data && rv.data.tags) || [];
+                console.log('[ST] Теги тикета ' + key + ':', tagsNow);
+                if (tagsNow.includes(tag)) { showToast('Тег «' + tag + '» добавлен в ' + key, 5000); }
+                else { console.warn('[ST] Тег не подтверждён, ответ API:', JSON.stringify(rv.data).slice(0, 500)); showToast('Тег не подтвердился — смотри консоль', 7000); }
+            } catch (e) {
+                console.warn('[ST] ST_ADD_TAG ошибка:', e.status, String(e.text || '').slice(0, 500));
+                showToast('Ошибка добавления тега: ' + String(e.status || ''), 7000);
             }
         }
     });
