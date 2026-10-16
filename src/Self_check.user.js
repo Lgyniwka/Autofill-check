@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ST Ticket Self-Check
 // @namespace    http://tampermonkey.net/
-// @version      5.29
+// @version      5.31
 // @description  Самопроверка + форма учёта + комментарии. Переходы/поля/резолюция — через API Stracker
 // @author       You
 // @match        https://st.yandex-team.ru/*
@@ -666,6 +666,44 @@
         flag: 'BD-02'
     };
 
+    // Добавить тег тикету и вернуть итоговый список. Эндпоинта
+    // /v3/.../tags/_add НЕ СУЩЕСТВУЕТ (404) — v3 меняет теги только PATCH'ем
+    // (полная замена массива). Чтобы не затереть чужие теги (например, Meh
+    // от триггера перехода), используем оптимистичную блокировку: PATCH с
+    // полем version — при конкурентном изменении сервер вернёт 409,
+    // перечитываем и повторяем (до 5 попыток), ничего не теряя.
+    async function addTicketTag(issueKey, tag) {
+        for (let attempt = 0; attempt < 5; attempt++) {
+            let version = null;
+            let current = [];
+            try {
+                const r = await apiRequest('GET', `https://st-api.yandex-team.ru/v3/issues/${issueKey}?fields=version,tags`);
+                if (r.data && Array.isArray(r.data.tags)) current = [...r.data.tags];
+                if (r.data && r.data.version != null) version = r.data.version;
+            } catch (e) {
+                console.warn('[ST] GET тегов/version не прошёл:', e.status, String(e.text || '').slice(0, 300));
+                return [];
+            }
+            if (current.includes(tag)) return current;
+            const body = { tags: [...current, tag] };
+            if (version != null) body.version = version; // 409 при гонке, без затирания
+            try {
+                await apiRequest('PATCH', `https://st-api.yandex-team.ru/v3/issues/${issueKey}`, body);
+                const rv = await apiRequest('GET', `https://st-api.yandex-team.ru/v3/issues/${issueKey}?fields=tags`);
+                return (rv.data && rv.data.tags) || [];
+            } catch (e) {
+                if (e.status === 409 && attempt < 4) {
+                    console.warn('[ST] Теги изменились конкурентно (409) — перечитываю, попытка ' + (attempt + 2));
+                    await sleep(400);
+                    continue;
+                }
+                console.warn('[ST] PATCH тегов не прошёл:', e.status, String(e.text || '').slice(0, 300));
+                throw e;
+            }
+        }
+        return [];
+    }
+
     async function runMicrophoneOrder(locationName, locationId, issueKey, preset, startedAt, quantity, opts) {
         startedAt = startedAt || Date.now();
         preset = preset || 'mic';
@@ -693,10 +731,7 @@
             const presetTag = PRESET_TAGS[preset];
             if (presetTag) {
                 try {
-                    await apiRequest('POST', `https://st-api.yandex-team.ru/v3/issues/${issueKey}/tags/_add`, [presetTag]);
-                    // Верификация: перечитываем теги тикета и проверяем наличие
-                    const rv = await apiRequest('GET', `https://st-api.yandex-team.ru/v3/issues/${issueKey}?fields=tags`);
-                    const tagsNow = (rv.data && rv.data.tags) || [];
+                    const tagsNow = await addTicketTag(issueKey, presetTag);
                     if (tagsNow.includes(presetTag)) console.log('[ST] Тег добавлен и подтверждён:', presetTag, '| все теги:', tagsNow);
                     else console.warn('[ST] Тег НЕ виден после добавления. Текущие теги:', tagsNow);
                 } catch (e) {
@@ -1153,12 +1188,10 @@
             const key = event.data.key || getTicketKey();
             if (!tag || !key) { console.warn('[ST] ST_ADD_TAG: нужен tag и key'); return; }
             try {
-                await apiRequest('POST', `https://st-api.yandex-team.ru/v3/issues/${key}/tags/_add`, [tag]);
-                const rv = await apiRequest('GET', `https://st-api.yandex-team.ru/v3/issues/${key}?fields=tags`);
-                const tagsNow = (rv.data && rv.data.tags) || [];
+                const tagsNow = await addTicketTag(key, tag);
                 console.log('[ST] Теги тикета ' + key + ':', tagsNow);
                 if (tagsNow.includes(tag)) { showToast('Тег «' + tag + '» добавлен в ' + key, 5000); }
-                else { console.warn('[ST] Тег не подтверждён, ответ API:', JSON.stringify(rv.data).slice(0, 500)); showToast('Тег не подтвердился — смотри консоль', 7000); }
+                else { console.warn('[ST] Тег не подтверждён'); showToast('Тег не подтвердился — смотри консоль', 7000); }
             } catch (e) {
                 console.warn('[ST] ST_ADD_TAG ошибка:', e.status, String(e.text || '').slice(0, 500));
                 showToast('Ошибка добавления тега: ' + String(e.status || ''), 7000);
