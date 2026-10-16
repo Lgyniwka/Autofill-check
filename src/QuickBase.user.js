@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         QuickBase: Панель базы знаний (все сайты)
 // @namespace    https://github.com/Lgyniwka/Autofill-check/blob/main/src/QuickBase.user.js
-// @version      0.13.4
+// @version      0.14.0
 // @description  Панель базы знаний. Работы по роботу: скрытие тикетов как на портале — не только по резолюции, но и по типу статуса (cancelled/done/closed). Кружки приоритетов, копирование названий с эмодзи, токен 🔑 один раз.
 // @homepageURL  https://github.com/Lgyniwka/Autofill-check/blob/main/src/QuickBase.user.js
 // @supportURL   https://github.com/Lgyniwka/Autofill-check/blob/main/src/QuickBase.user.js
@@ -645,7 +645,8 @@
             });
         });
 
-        input.focus();
+        // Фокус теперь в поле номера робота (оно поднято первым)
+        document.getElementById('qb_robot_input').focus();
     }
 
     function toggleDetails(row) {
@@ -862,7 +863,6 @@
                     <span class="qb_title">⚡ QuickBase — база знаний</span>
                     <span class="qb_close" title="Закрыть">✕</span>
                 </div>
-                <input id="qb_search" type="text" placeholder="Поиск по разделам и работам…" autocomplete="off">
                 <div class="qb_robot">
                     <input id="qb_robot_input" type="text" inputmode="numeric"
                            placeholder="Работы по роботу — номер без «a», напр. 1580" autocomplete="off">
@@ -870,6 +870,7 @@
                     <span id="qb_robot_go">🔍</span>
                 </div>
                 <div id="qb_robot_results"></div>
+                <input id="qb_search" type="text" placeholder="Поиск по разделам и работам…" autocomplete="off">
                 <div id="qb_sections">${sectionsHTML}</div>
                 <div class="qb_empty" id="qb_empty" style="display:none">Ничего не найдено</div>
             </div>`;
