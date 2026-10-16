@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ST Ticket Self-Check
 // @namespace    http://tampermonkey.net/
-// @version      5.31
+// @version      5.32
 // @description  Самопроверка + форма учёта + комментарии. Переходы/поля/резолюция — через API Stracker
 // @author       You
 // @match        https://st.yandex-team.ru/*
@@ -668,40 +668,28 @@
 
     // Добавить тег тикету и вернуть итоговый список. Эндпоинта
     // /v3/.../tags/_add НЕ СУЩЕСТВУЕТ (404) — v3 меняет теги только PATCH'ем
-    // (полная замена массива). Чтобы не затереть чужие теги (например, Meh
-    // от триггера перехода), используем оптимистичную блокировку: PATCH с
-    // полем version — при конкурентном изменении сервер вернёт 409,
-    // перечитываем и повторяем (до 5 попыток), ничего не теряя.
+    // (полная замена массива). PATCH с полем version API не принимает
+    // («Field [version] was not found») — делаем read-modify-write.
+    // Гонка не страшна: Meh добавляется триггером перехода «Обработан»,
+    // который выполняется ПОСЛЕ постановки тега.
     async function addTicketTag(issueKey, tag) {
-        for (let attempt = 0; attempt < 5; attempt++) {
-            let version = null;
-            let current = [];
-            try {
-                const r = await apiRequest('GET', `https://st-api.yandex-team.ru/v3/issues/${issueKey}?fields=version,tags`);
-                if (r.data && Array.isArray(r.data.tags)) current = [...r.data.tags];
-                if (r.data && r.data.version != null) version = r.data.version;
-            } catch (e) {
-                console.warn('[ST] GET тегов/version не прошёл:', e.status, String(e.text || '').slice(0, 300));
-                return [];
-            }
-            if (current.includes(tag)) return current;
-            const body = { tags: [...current, tag] };
-            if (version != null) body.version = version; // 409 при гонке, без затирания
-            try {
-                await apiRequest('PATCH', `https://st-api.yandex-team.ru/v3/issues/${issueKey}`, body);
-                const rv = await apiRequest('GET', `https://st-api.yandex-team.ru/v3/issues/${issueKey}?fields=tags`);
-                return (rv.data && rv.data.tags) || [];
-            } catch (e) {
-                if (e.status === 409 && attempt < 4) {
-                    console.warn('[ST] Теги изменились конкурентно (409) — перечитываю, попытка ' + (attempt + 2));
-                    await sleep(400);
-                    continue;
-                }
-                console.warn('[ST] PATCH тегов не прошёл:', e.status, String(e.text || '').slice(0, 300));
-                throw e;
-            }
+        let current = [];
+        try {
+            const r = await apiRequest('GET', `https://st-api.yandex-team.ru/v3/issues/${issueKey}?fields=tags`);
+            if (r.data && Array.isArray(r.data.tags)) current = [...r.data.tags];
+        } catch (e) {
+            console.warn('[ST] GET тегов не прошёл:', e.status, String(e.text || '').slice(0, 300));
+            return [];
         }
-        return [];
+        if (current.includes(tag)) return current;
+        try {
+            await apiRequest('PATCH', `https://st-api.yandex-team.ru/v3/issues/${issueKey}`, { tags: [...current, tag] });
+            const rv = await apiRequest('GET', `https://st-api.yandex-team.ru/v3/issues/${issueKey}?fields=tags`);
+            return (rv.data && rv.data.tags) || [];
+        } catch (e) {
+            console.warn('[ST] PATCH тегов не прошёл:', e.status, String(e.text || '').slice(0, 300));
+            throw e;
+        }
     }
 
     async function runMicrophoneOrder(locationName, locationId, issueKey, preset, startedAt, quantity, opts) {
