@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ST Ticket Self-Check
 // @namespace    http://tampermonkey.net/
-// @version      5.32
+// @version      5.33
 // @description  Самопроверка + форма учёта + комментарии. Переходы/поля/резолюция — через API Stracker
 // @author       You
 // @match        https://st.yandex-team.ru/*
@@ -667,24 +667,29 @@
     };
 
     // Добавить тег тикету и вернуть итоговый список. Эндпоинта
-    // /v3/.../tags/_add НЕ СУЩЕСТВУЕТ (404) — v3 меняет теги только PATCH'ем
-    // (полная замена массива). PATCH с полем version API не принимает
-    // («Field [version] was not found») — делаем read-modify-write.
-    // Гонка не страшна: Meh добавляется триггером перехода «Обработан»,
-    // который выполняется ПОСЛЕ постановки тега.
+    // /v3/.../tags/_add НЕТ, поле version PATCH не принимает — только
+    // read-modify-write. ВАЖНО: GET ?fields=tags теги НЕ отдаёт (пустой
+    // ответ) — из-за этого PATCH затирал старые теги. Читаем ПОЛНЫЙ тикет.
     async function addTicketTag(issueKey, tag) {
         let current = [];
         try {
-            const r = await apiRequest('GET', `https://st-api.yandex-team.ru/v3/issues/${issueKey}?fields=tags`);
+            const r = await apiRequest('GET', `https://st-api.yandex-team.ru/v3/issues/${issueKey}`);
+            console.log('[ST] addTicketTag: полный GET OK; keys ответа:', r.data ? Object.keys(r.data).join(',') : '—', '| tags:', JSON.stringify(r.data && r.data.tags));
             if (r.data && Array.isArray(r.data.tags)) current = [...r.data.tags];
+            else console.warn('[ST] addTicketTag: в ответе нет массива tags — Patch отменён, чтобы не затереть теги');
         } catch (e) {
             console.warn('[ST] GET тегов не прошёл:', e.status, String(e.text || '').slice(0, 300));
             return [];
         }
         if (current.includes(tag)) return current;
+        if (!current.length) {
+            // Если теги реально пусты — ок; но страхуемся: не патчим, если
+            // структура ответа неожиданная (r.data без tags уже отсечён выше).
+            console.log('[ST] addTicketTag: текущих тегов нет, ставим только', tag);
+        }
         try {
             await apiRequest('PATCH', `https://st-api.yandex-team.ru/v3/issues/${issueKey}`, { tags: [...current, tag] });
-            const rv = await apiRequest('GET', `https://st-api.yandex-team.ru/v3/issues/${issueKey}?fields=tags`);
+            const rv = await apiRequest('GET', `https://st-api.yandex-team.ru/v3/issues/${issueKey}`);
             return (rv.data && rv.data.tags) || [];
         } catch (e) {
             console.warn('[ST] PATCH тегов не прошёл:', e.status, String(e.text || '').slice(0, 300));
